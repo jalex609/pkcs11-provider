@@ -190,6 +190,7 @@ static int p11prov_ec_gen_set_params(void *genctx, const OSSL_PARAM params[])
         }
         break;
     case CKK_EC_EDWARDS:
+    case CKK_EC_EDWARDS_LEGACY:
         p = OSSL_PARAM_locate_const(params, P11PROV_ED_NAME);
         if (p) {
             if (p->data_type != OSSL_PARAM_UTF8_STRING) {
@@ -286,7 +287,7 @@ static void *p11prov_ec_gen(void *genctx, OSSL_CALLBACK *cb_fn, void *cb_arg)
     int pubtsize = EC_PUBKEY_TMPL_SIZE;
     int privtsize = EC_PRIVKEY_TMPL_SIZE;
 
-    if (ctx->type == CKK_EC_EDWARDS) {
+    if (ctx->type == CKK_EC_EDWARDS || ctx->type == CKK_EC_EDWARDS_LEGACY) {
         /* CKA_DERIVE */
         pubkey_template[1].pValue = DISCARD_CONST(&val_false);
         privkey_template[1].pValue = DISCARD_CONST(&val_false);
@@ -742,19 +743,19 @@ static const OSSL_PARAM *p11prov_ed_gen_settable_params(void *genctx,
 
 static void *p11prov_ed_load(const void *reference, size_t reference_sz)
 {
-    return p11prov_kmgmt_load(reference, reference_sz, CKK_EC_EDWARDS);
+   return p11prov_kmgmt_load(reference, reference_sz, CKK_EC_EDWARDS_LEGACY);
 }
 
 static int p11prov_ed_match(const void *keydata1, const void *keydata2,
                             int selection)
 {
-    return p11prov_kmgmt_match(keydata1, keydata2, CKK_EC_EDWARDS, selection);
+    return p11prov_kmgmt_match(keydata1, keydata2, CKK_EC_EDWARDS_LEGACY, selection);
 }
 
 static int p11prov_ed_import(void *keydata, int selection,
                              const OSSL_PARAM params[])
 {
-    return p11prov_kmgmt_import(CKK_EC_EDWARDS, CK_UNAVAILABLE_INFORMATION,
+    return p11prov_kmgmt_import(CKK_EC_EDWARDS_LEGACY, CK_UNAVAILABLE_INFORMATION,
                                 OSSL_PKEY_PARAM_PRIV_KEY, keydata, selection,
                                 params);
 }

@@ -92,6 +92,7 @@ static const char *p11prov_key_type_name(P11PROV_OBJ *key)
     case CKK_EC:
         return "EC";
     case CKK_EC_EDWARDS:
+    case CKK_EC_EDWARDS_LEGACY:
         subtype = p11prov_obj_get_key_bit_size(key);
         switch (subtype) {
         case ED25519_BIT_SIZE:
@@ -246,6 +247,7 @@ static X509_PUBKEY *p11prov_pubkey_to_x509(P11PROV_OBJ *key)
         break;
     case CKK_EC:
     case CKK_EC_EDWARDS:
+    case CKK_EC_EDWARDS_LEGACY:
     case CKK_EC_MONTGOMERY:
         ret = p11prov_ec_pubkey_to_x509(pubkey, key);
         break;
@@ -1222,7 +1224,7 @@ static int p11prov_ec_edwards_encoder_priv_key_info_pem_encode(
     OSSL_PASSPHRASE_CALLBACK *cb, void *cbarg)
 {
     return p11prov_encoder_private_key_write_pem(
-        CKK_EC_EDWARDS, inctx, cbio, inkey, key_abstract, selection, cb, cbarg);
+        CKK_EC_EDWARDS_LEGACY, inctx, cbio, inkey, key_abstract, selection, cb, cbarg);
 }
 
 const OSSL_DISPATCH p11prov_ec_edwards_encoder_priv_key_info_pem_functions[] = {
