@@ -456,6 +456,7 @@ static int p11prov_store_load(void *pctx, OSSL_CALLBACK *object_cb,
             data_type = (char *)P11PROV_NAME_EC;
             break;
         case CKK_EC_EDWARDS:
+        case CKK_EC_EDWARDS_LEGACY:
             switch (p11prov_obj_get_key_bit_size(obj)) {
             case ED448_BIT_SIZE:
                 data_type = (char *)ED448;

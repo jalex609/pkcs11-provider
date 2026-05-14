@@ -789,6 +789,7 @@ static CK_RV p11prov_obj_import_public_key(P11PROV_OBJ *key,
         break;
 
     case CKK_EC_EDWARDS:
+    case CKK_EC_EDWARDS_LEGACY:
         P11PROV_debug("obj import of Edwards public key %p", key);
         rv = prep_ed_find(ctx, params, &findctx);
         if (rv != CKR_OK) {
@@ -829,6 +830,7 @@ static CK_RV p11prov_obj_import_public_key(P11PROV_OBJ *key,
     switch (findctx.type) {
     case CKK_EC:
     case CKK_EC_EDWARDS:
+    case CKK_EC_EDWARDS_LEGACY:
     case CKK_EC_MONTGOMERY:
         allocattrs += 1;
         break;
@@ -882,6 +884,7 @@ static CK_RV p11prov_obj_import_public_key(P11PROV_OBJ *key,
     switch (findctx.type) {
     case CKK_EC:
     case CKK_EC_EDWARDS:
+    case CKK_EC_EDWARDS_LEGACY:
     case CKK_EC_MONTGOMERY:
         rv = fix_ec_key_import(key, allocattrs);
         break;
@@ -1015,6 +1018,7 @@ static CK_RV p11prov_store_ec_public_key(P11PROV_OBJ *key)
         p11prov_set_attr_bool(&template[6], CKA_VERIFY, true);
         break;
     case CKK_EC_EDWARDS:
+    case CKK_EC_EDWARDS_LEGACY:
         /* Signatures only */
         p11prov_set_attr_bool(&template[5], CKA_VERIFY, true);
         /* only one attr */
@@ -1173,6 +1177,7 @@ static CK_RV pub_from_priv_attrs(P11PROV_OBJ *key)
         break;
     case CKK_EC:
     case CKK_EC_EDWARDS:
+    case CKK_EC_EDWARDS_LEGACY:
     case CKK_EC_MONTGOMERY:
         /* ec params */
         params = p11prov_obj_get_attr(key->assoc_obj, CKA_EC_PARAMS);
@@ -1247,6 +1252,7 @@ CK_RV p11prov_obj_store_public_key(P11PROV_OBJ *key)
         break;
     case CKK_EC:
     case CKK_EC_EDWARDS:
+    case CKK_EC_EDWARDS_LEGACY:
     case CKK_EC_MONTGOMERY:
         rv = p11prov_store_ec_public_key(key);
         break;
@@ -1469,6 +1475,7 @@ static CK_RV p11prov_store_ec_private_key(P11PROV_OBJ *key,
         p11prov_set_attr_bool(&template[9], CKA_SIGN, true);
         break;
     case CKK_EC_EDWARDS:
+    case CKK_EC_EDWARDS_LEGACY:
         template[7].pValue = p->data;
         template[7].ulValueLen = p->data_size;
         /* Signatures only */
@@ -1682,6 +1689,7 @@ static CK_RV p11prov_obj_import_private_key(P11PROV_OBJ *key,
         break;
 
     case CKK_EC_EDWARDS:
+    case CKK_EC_EDWARDS_LEGACY:
         rv = prep_ed_find(ctx, params, &findctx);
         if (rv != CKR_OK) {
             goto done;
@@ -1747,6 +1755,7 @@ static CK_RV p11prov_obj_import_private_key(P11PROV_OBJ *key,
         break;
     case CKK_EC:
     case CKK_EC_EDWARDS:
+    case CKK_EC_EDWARDS_LEGACY:
     case CKK_EC_MONTGOMERY:
         rv = p11prov_store_ec_private_key(key, &findctx, params);
         break;
