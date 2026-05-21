@@ -493,11 +493,14 @@ int p11prov_kmgmt_export(void *keydata, int selection, OSSL_CALLBACK *cb_fn,
         return RET_OSSL_ERR;
     }
 
+    P11PROV_debug("EXPORTING KEY BEING PICKED");
     if (selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY) {
+        P11PROV_debug("DOING PUBLIC KEY");
         return p11prov_obj_export_public_key(key, cb_fn, cb_arg);
     }
 
     if (selection & OSSL_KEYMGMT_SELECT_DOMAIN_PARAMETERS) {
+        P11PROV_debug("DOING PRIVATE KEY");
         return p11prov_obj_export_params(key, cb_fn, cb_arg);
     }
 
