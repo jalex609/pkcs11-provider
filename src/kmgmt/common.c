@@ -487,6 +487,7 @@ int p11prov_kmgmt_export(void *keydata, int selection, OSSL_CALLBACK *cb_fn,
     P11PROV_debug("HI 2");              
     if (class == CKO_PRIVATE_KEY
         && (selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY)) {
+        P11PROV_debug("RETURNING ERROR");
         /* can't export private keys */
         return RET_OSSL_ERR;
     }
