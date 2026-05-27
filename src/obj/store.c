@@ -91,6 +91,7 @@ static CK_RV private_key_to_id(P11PROV_CTX *ctx, struct pool_find_ctx *findctx,
 
     rv = p11prov_digest_util(ctx, "sha256", NULL, data, &digest);
     if (rv == CKR_OK) {
+        P11PROV_debug("HI 4\n");
         findctx->attrs[findctx->numattrs].type = CKA_ID;
         findctx->attrs[findctx->numattrs].pValue = digest.data;
         findctx->attrs[findctx->numattrs].ulValueLen = digest.length;
@@ -232,6 +233,7 @@ static CK_RV prep_ec_find(P11PROV_CTX *ctx, const OSSL_PARAM params[],
                 goto done;
             }
 
+            P11PROV_debug("HI 1\n");
             rv = param_data_to_attr(findctx, CKA_P11PROV_PUB_KEY, pub_data,
                                     plen, false);
             if (rv != CKR_OK) {
@@ -257,10 +259,12 @@ static CK_RV prep_ec_find(P11PROV_CTX *ctx, const OSSL_PARAM params[],
         }
 
         if (curve_name) {
+            P11PROV_debug("HI 2\n");
             rv = private_key_to_id(ctx, findctx, (uint8_t *)curve_name,
                                    strlen(curve_name), (uint8_t *)ecparams,
                                    ecplen, p->data, p->data_size);
         } else {
+            P11PROV_debug("HI 3\n");
             rv = private_key_to_id(ctx, findctx, (uint8_t *)ecparams, ecplen,
                                    p->data, p->data_size, NULL, 0);
         }
@@ -875,6 +879,7 @@ static CK_RV p11prov_obj_import_public_key(P11PROV_OBJ *key,
         goto done;
     }
     for (int i = 0; i < findctx.numattrs; i++) {
+        P11PROV_debug("Attrs type is 0x%08lX\n",findctx.attrs[i].type);
         key->attrs[i] = findctx.attrs[i];
         findctx.attrs[i].pValue = NULL;
     }

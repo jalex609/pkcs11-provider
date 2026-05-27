@@ -40,6 +40,7 @@ struct p11prov_ctx {
     bool no_deinit;
     bool no_allowed_mechanisms;
     bool no_session_callbacks;
+    bool pkcs11_v2_compatibility;
     uint64_t blocked_calls;
     bool blocked_ops[OSSL_OP__HIGHEST + 1];
 
@@ -1982,6 +1983,9 @@ int OSSL_provider_init(const OSSL_CORE_HANDLE *handle, const OSSL_DISPATCH *in,
             } else if (strncmp(str, "no-session-callbacks", toklen) == 0) {
                 show_quirks = true;
                 ctx->no_session_callbacks = true;
+            } else if (strncmp(str, "pkcs11v2-compatibility")) {
+                show_quirks = true;
+                ctx->pkcs11_v2_compatibility = true;
             }
             len -= toklen;
             if (sep) {
