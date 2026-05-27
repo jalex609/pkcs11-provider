@@ -6,6 +6,7 @@
 /* clang-format off */
 #define COMMON_KEY_ATTRIBUTES \
     { { CKA_ID, NULL, 0 }, true, false }, \
+    { { CKA_UNIQUE_ID, NULL, 0 }, true, false }, \
     { { CKA_LABEL, NULL, 0 }, true, false }
 
 #define COMMON_KEYPAIR_ATTRIBUTES \
