@@ -40,7 +40,6 @@ struct p11prov_ctx {
     bool no_deinit;
     bool no_allowed_mechanisms;
     bool no_session_callbacks;
-    bool pkcs11_v2_compatibility;
     uint64_t blocked_calls;
     bool blocked_ops[OSSL_OP__HIGHEST + 1];
 
@@ -923,7 +922,6 @@ static CK_RV operations_init(P11PROV_CTX *ctx)
                              CKM_HKDF_DERIVE,
                              DIGEST_MECHS,
                              CKM_EDDSA,
-                             CKM_EDDSA_LEGACY,
                              PQC_MECHS,
 #if SKEY_SUPPORT == 1
                              AES_MECHS
@@ -1209,13 +1207,11 @@ static CK_RV operations_init(P11PROV_CTX *ctx)
                 break;
             case CKM_EDDSA:
             case CKM_EC_EDWARDS_KEY_PAIR_GEN:
-            case CKM_EDDSA_LEGACY:
-            case CKM_EC_EDWARDS_KEY_PAIR_GEN_LEGACY:
                 ADD_ALGO_EXT(ED25519, signature, prop,
                              p11prov_ed25519_signature_functions);
                 ADD_ALGO_EXT(ED448, signature, prop,
                              p11prov_ed448_signature_functions);
-                UNCHECK_MECHS(CKM_EC_EDWARDS_KEY_PAIR_GEN, CKM_EDDSA, CKM_EC_EDWARDS_KEY_PAIR_GEN_LEGACY);
+                UNCHECK_MECHS(CKM_EC_EDWARDS_KEY_PAIR_GEN, CKM_EDDSA);
 #if defined(OSSL_FUNC_SIGNATURE_SIGN_MESSAGE_INIT)
                 ADD_ALGO_EXT(ED25519ph, signature, prop,
                              p11prov_ed25519ph_signature_functions);
@@ -1330,11 +1326,6 @@ static CK_RV operations_init(P11PROV_CTX *ctx)
     if (add_rsaenc) {
         ADD_ALGO(RSA, rsa, asym_cipher, prop);
     }
-
-    ADD_ALGO_EXT(ED25519, signature, prop, p11prov_ed25519_signature_functions);
-    ADD_ALGO_EXT(ED448, signature, prop, p11prov_ed448_signature_functions);
-    UNCHECK_MECHS(CKM_EC_EDWARDS_KEY_PAIR_GEN, CKM_EDDSA,
-                  CKM_EC_EDWARDS_KEY_PAIR_GEN_LEGACY);
     /* terminations */
     TERM_ALGO(digest);
     TERM_ALGO(kdf);
@@ -1983,9 +1974,6 @@ int OSSL_provider_init(const OSSL_CORE_HANDLE *handle, const OSSL_DISPATCH *in,
             } else if (strncmp(str, "no-session-callbacks", toklen) == 0) {
                 show_quirks = true;
                 ctx->no_session_callbacks = true;
-            } else if (strncmp(str, "pkcs11v2-compatibility")) {
-                show_quirks = true;
-                ctx->pkcs11_v2_compatibility = true;
             }
             len -= toklen;
             if (sep) {
