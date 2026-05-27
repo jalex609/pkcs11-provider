@@ -6,7 +6,6 @@
 /* clang-format off */
 #define COMMON_KEY_ATTRIBUTES \
     { { CKA_ID, NULL, 0 }, true, false }, \
-    { { CKA_UNIQUE_ID, NULL, 0 }, true, false }, \
     { { CKA_LABEL, NULL, 0 }, true, false }
 
 #define COMMON_KEYPAIR_ATTRIBUTES \
@@ -611,11 +610,7 @@ P11PROV_OBJ *p11prov_obj_find_associated(P11PROV_OBJ *obj,
     if (!id || id->ulValueLen == 0) {
         P11PROV_raise(obj->ctx, CKR_GENERAL_ERROR,
                       "No CKA_ID in source object");
-        id = p11prov_obj_get_attr(obj, CKA_UNIQUE_ID);
-        if (!id || id->ulValueLen == 0) {
-            P11PROV_raise(obj->ctx, CKR_GENERAL_ERROR, "No CKA_ID or CKA_UNIQUE_ID in source object");
-            goto done;
-        }
+        goto done;
     }
 
     CKATTR_ASSIGN(template[0], CKA_CLASS, &class, sizeof(class));
