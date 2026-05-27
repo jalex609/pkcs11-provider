@@ -606,18 +606,15 @@ P11PROV_OBJ *p11prov_obj_find_associated(P11PROV_OBJ *obj,
     }
 
     id = p11prov_obj_get_attr(obj, CKA_ID);
-   
-    P11PROV_debug("The attribute value length is: %lu bytes", id->ulValueLen);
-    CK_BYTE_PTR pId = (CK_BYTE_PTR)id->pValue;
-     // Print each byte
-    for (CK_ULONG i = 0; i < 1; i++) {
-        // Print as 2-digit hex
-        P11PROV_debug("%02X", pId[i]);
-    }
+
     if (!id || id->ulValueLen == 0) {
         P11PROV_raise(obj->ctx, CKR_GENERAL_ERROR,
                       "No CKA_ID in source object");
-        goto done;
+        id = p11prov_obj_get_attr(obj, CKA_UNIQUE_ID);
+        if (!id || id->ulValueLen == 0) {
+            P11PROV_raise(obj->ctx, CKR_GENERAL_ERROR, "No CKA_ID or CKA_UNIQUE_ID in source object");
+            goto done;
+        }
     }
 
     CKATTR_ASSIGN(template[0], CKA_CLASS, &class, sizeof(class));
