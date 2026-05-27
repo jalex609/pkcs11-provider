@@ -193,6 +193,7 @@ static CK_RV prep_ec_find(P11PROV_CTX *ctx, const OSSL_PARAM params[],
 
     switch (findctx->class) {
     case CKO_PUBLIC_KEY:
+        P11PROV_debug("FIND PUBLIC KEY\n");
         p = OSSL_PARAM_locate_const(params, OSSL_PKEY_PARAM_PUB_KEY);
         if (!p) {
             P11PROV_raise(ctx, CKR_KEY_INDIGESTIBLE, "Missing %s",
@@ -201,6 +202,8 @@ static CK_RV prep_ec_find(P11PROV_CTX *ctx, const OSSL_PARAM params[],
             rv = CKR_KEY_INDIGESTIBLE;
             goto done;
         }
+        P11PROV_debug("LOCATED P\n");
+
 
         /* Providers may export in any format - OpenSSL < 3.0.8
          * ignores the "point-format" OSSL_PARAM and unconditionally uses
@@ -240,6 +243,7 @@ static CK_RV prep_ec_find(P11PROV_CTX *ctx, const OSSL_PARAM params[],
                 goto done;
             }
         } else {
+            P11PROV_debug("ABOUT TO CALL PARAM DATA TO ATTR ON UNCOMPRESSED\n");
             rv = param_data_to_attr(findctx, CKA_P11PROV_PUB_KEY, p->data,
                                     p->data_size, false);
             if (rv != CKR_OK) {

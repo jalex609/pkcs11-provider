@@ -626,6 +626,7 @@ static int match_key_with_cert(P11PROV_OBJ *priv_key, P11PROV_OBJ *pub_key)
     int num = 0;
     int ret = RET_OSSL_ERR;
 
+    P11PROV_debug("FIND CERT\n");
     cert = p11prov_obj_find_associated(priv_key, CKO_CERTIFICATE);
     if (!cert) {
         P11PROV_raise(priv_key->ctx, CKR_GENERAL_ERROR,
@@ -633,6 +634,7 @@ static int match_key_with_cert(P11PROV_OBJ *priv_key, P11PROV_OBJ *pub_key)
         return RET_OSSL_ERR;
     }
 
+    P11PROV_debug("FIND CERT 2\n");
     switch (pub_key->data.key.type) {
     case CKK_RSA:
         attrs[0].type = CKA_MODULUS;
@@ -711,10 +713,14 @@ static int match_public_keys(P11PROV_OBJ *key1, P11PROV_OBJ *key2)
         return RET_OSSL_ERR;
     }
 
+    P11PROV_debug("FIND ASSOCIATED in match\n");
     assoc_pub_key = p11prov_obj_find_associated(priv_key, CKO_PUBLIC_KEY);
     if (!assoc_pub_key) {
         P11PROV_raise(priv_key->ctx, CKR_GENERAL_ERROR,
                       "Could not find associated public key object");
+
+        
+        P11PROV_debug("RETURNING ERROR here\n");
 
         /* some tokens only store the public key in a cert and not in a
          * separate public key object */
@@ -791,6 +797,7 @@ int p11prov_obj_key_cmp(P11PROV_OBJ *key1, P11PROV_OBJ *key2, CK_KEY_TYPE type,
             EC_GROUP *group2 = NULL;
             BN_CTX *bnctx = NULL;
 
+            P11PROV_debug("ABOUT TO GET EC PARAMS\n");
             ec_p = p11prov_obj_get_attr(key1, CKA_EC_PARAMS);
             if (!ec_p) {
                 ret = RET_OSSL_ERR;
@@ -803,6 +810,7 @@ int p11prov_obj_key_cmp(P11PROV_OBJ *key1, P11PROV_OBJ *key2, CK_KEY_TYPE type,
                 goto out;
             }
 
+            P11PROV_debug("ABOUT TO GET EC PARAMS 2\n");
             ec_p = p11prov_obj_get_attr(key2, CKA_EC_PARAMS);
             if (!ec_p) {
                 ret = RET_OSSL_ERR;

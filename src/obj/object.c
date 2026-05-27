@@ -466,6 +466,7 @@ CK_ATTRIBUTE *p11prov_obj_get_attr(P11PROV_OBJ *obj, CK_ATTRIBUTE_TYPE type)
     }
 
     for (int i = 0; i < obj->numattrs; i++) {
+        P11PROV_debug("Attrs for prov are: 0x%08lX", obj->attrs[i].type);
         if (obj->attrs[i].type == type) {
             return &obj->attrs[i];
         }
