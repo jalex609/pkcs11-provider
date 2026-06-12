@@ -388,19 +388,19 @@ static int p11prov_rsasig_set_pss_saltlen_max(void *ctx, bool max_to_digest)
 DISPATCH_RSASIG_FN(newctx);
 DISPATCH_RSASIG_FN(sign_init);
 DISPATCH_RSASIG_FN(sign);
-DISPATCH_RSASIG_FN(verify_init);
-DISPATCH_RSASIG_FN(verify);
+// DISPATCH_RSASIG_FN(verify_init);
+// DISPATCH_RSASIG_FN(verify);
 DISPATCH_RSASIG_FN(digest_sign_init);
 DISPATCH_RSASIG_FN(digest_sign_update);
 DISPATCH_RSASIG_FN(digest_sign_final);
-DISPATCH_RSASIG_FN(digest_verify_init);
-DISPATCH_RSASIG_FN(digest_verify_update);
-DISPATCH_RSASIG_FN(digest_verify_final);
+// DISPATCH_RSASIG_FN(digest_verify_init);
+// DISPATCH_RSASIG_FN(digest_verify_update);
+// DISPATCH_RSASIG_FN(digest_verify_final);
 #if defined(OSSL_FUNC_SIGNATURE_SIGN_MESSAGE_INIT)
 DISPATCH_RSASIG_FN(sign_message_update);
 DISPATCH_RSASIG_FN(sign_message_final);
-DISPATCH_RSASIG_FN(verify_message_update);
-DISPATCH_RSASIG_FN(verify_message_final);
+// DISPATCH_RSASIG_FN(verify_message_update);
+// DISPATCH_RSASIG_FN(verify_message_final);
 DISPATCH_RSASIG_FN(query_key_types);
 #endif /* OSSL_FUNC_SIGNATURE_SIGN_MESSAGE_INIT */
 DISPATCH_RSASIG_FN(get_ctx_params);
@@ -1264,14 +1264,14 @@ const OSSL_DISPATCH p11prov_rsa_signature_functions[] = {
     DISPATCH_SIG_ELEM(sig, DUPCTX, dupctx),
     DISPATCH_SIG_ELEM(rsasig, SIGN_INIT, sign_init),
     DISPATCH_SIG_ELEM(rsasig, SIGN, sign),
-    DISPATCH_SIG_ELEM(rsasig, VERIFY_INIT, verify_init),
-    DISPATCH_SIG_ELEM(rsasig, VERIFY, verify),
+    // DISPATCH_SIG_ELEM(rsasig, VERIFY_INIT, verify_init),
+    // DISPATCH_SIG_ELEM(rsasig, VERIFY, verify),
     DISPATCH_SIG_ELEM(rsasig, DIGEST_SIGN_INIT, digest_sign_init),
     DISPATCH_SIG_ELEM(rsasig, DIGEST_SIGN_UPDATE, digest_sign_update),
     DISPATCH_SIG_ELEM(rsasig, DIGEST_SIGN_FINAL, digest_sign_final),
-    DISPATCH_SIG_ELEM(rsasig, DIGEST_VERIFY_INIT, digest_verify_init),
-    DISPATCH_SIG_ELEM(rsasig, DIGEST_VERIFY_UPDATE, digest_verify_update),
-    DISPATCH_SIG_ELEM(rsasig, DIGEST_VERIFY_FINAL, digest_verify_final),
+    // DISPATCH_SIG_ELEM(rsasig, DIGEST_VERIFY_INIT, digest_verify_init),
+    // DISPATCH_SIG_ELEM(rsasig, DIGEST_VERIFY_UPDATE, digest_verify_update),
+    // DISPATCH_SIG_ELEM(rsasig, DIGEST_VERIFY_FINAL, digest_verify_final),
     DISPATCH_SIG_ELEM(rsasig, GET_CTX_PARAMS, get_ctx_params),
     DISPATCH_SIG_ELEM(rsasig, GETTABLE_CTX_PARAMS, gettable_ctx_params),
     DISPATCH_SIG_ELEM(rsasig, SET_CTX_PARAMS, set_ctx_params),
@@ -1286,29 +1286,16 @@ const OSSL_DISPATCH p11prov_rsa_signature_functions[] = {
     { \
         return p11prov_rsasig_digest_sign_init(ctx, digest, provkey, params); \
     } \
-    static int p11prov_rsasig_##alg##_verify_message_init( \
-        void *ctx, void *provkey, const OSSL_PARAM params[]) \
-    { \
-        return p11prov_rsasig_digest_verify_init(ctx, digest, provkey, \
-                                                 params); \
-    } \
     const OSSL_DISPATCH p11prov_rsa_##alg##_signature_functions[] = { \
         DISPATCH_SIG_ELEM(rsasig, NEWCTX, newctx), \
         DISPATCH_SIG_ELEM(sig, FREECTX, freectx), \
         DISPATCH_SIG_ELEM(sig, DUPCTX, dupctx), \
         DISPATCH_SIG_ELEM(rsasig, SIGN_INIT, sign_init), \
         DISPATCH_SIG_ELEM(rsasig, SIGN, sign), \
-        DISPATCH_SIG_ELEM(rsasig, VERIFY_INIT, verify_init), \
-        DISPATCH_SIG_ELEM(rsasig, VERIFY, verify), \
         { OSSL_FUNC_SIGNATURE_SIGN_MESSAGE_INIT, \
           (void (*)(void))p11prov_rsasig_##alg##_sign_message_init }, \
         DISPATCH_SIG_ELEM(rsasig, SIGN_MESSAGE_UPDATE, sign_message_update), \
         DISPATCH_SIG_ELEM(rsasig, SIGN_MESSAGE_FINAL, sign_message_final), \
-        { OSSL_FUNC_SIGNATURE_VERIFY_MESSAGE_INIT, \
-          (void (*)(void))p11prov_rsasig_##alg##_verify_message_init }, \
-        DISPATCH_SIG_ELEM(rsasig, VERIFY_MESSAGE_UPDATE, \
-                          verify_message_update), \
-        DISPATCH_SIG_ELEM(rsasig, VERIFY_MESSAGE_FINAL, verify_message_final), \
         DISPATCH_SIG_ELEM(rsasig, QUERY_KEY_TYPES, query_key_types), \
         DISPATCH_SIG_ELEM(rsasig, GET_CTX_PARAMS, get_ctx_params), \
         DISPATCH_SIG_ELEM(rsasig, GETTABLE_CTX_PARAMS, gettable_ctx_params), \
