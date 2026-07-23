@@ -249,6 +249,31 @@ CK_RV p11prov_init_slots(P11PROV_CTX *ctx, P11PROV_SLOTS_CTX **slots)
                            slot->mechs, slot->nmechs, slot->profiles);
     }
 
+    /* a configured default slot overrides the heuristic, but only if it
+     * exists and holds an initialized token */
+    if (p11prov_ctx_default_slot(ctx) != CK_UNAVAILABLE_INFORMATION) {
+        CK_SLOT_ID cfg_slot = p11prov_ctx_default_slot(ctx);
+        bool found = false;
+
+        for (int i = 0; i < sctx->num; i++) {
+            if (sctx->slots[i]->id == cfg_slot
+                && (sctx->slots[i]->token.flags & CKF_TOKEN_INITIALIZED)) {
+                found = true;
+                break;
+            }
+        }
+        if (found) {
+            sctx->default_slot = cfg_slot;
+            P11PROV_debug("Slot(%lu) set as a default slot (from config)",
+                          cfg_slot);
+        } else {
+            P11PROV_raise(ctx, CKR_SLOT_ID_INVALID,
+                          "Configured default slot %lu not found or not "
+                          "usable, ignoring",
+                          cfg_slot);
+        }
+    }
+
 done:
     OPENSSL_free(slotid);
 

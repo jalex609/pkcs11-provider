@@ -142,6 +142,22 @@ Example:
 ```pkcs11-module-cache-sessions = 0```
 (Disables caching)
 
+## pkcs11-module-default-slot
+Selects the slot used for operations that are not bound to a specific
+token, such as storing imported keys as session objects. By default the
+provider picks the first slot holding an initialized token that requires
+login; this option overrides that heuristic with an explicit slot id.
+If the configured slot does not exist or its token is not initialized,
+the option is ignored and the default heuristic applies.
+
+Default: unset
+(First usable slot with a login-required, initialized token)
+
+Example:
+
+```pkcs11-module-default-slot = 0```
+(Uses slot id 0 for token-independent operations)
+
 ## pkcs11-module-login-behavior
 Whether the pkcs11 provider will attempt to login to the token when a
 public key is being requested.

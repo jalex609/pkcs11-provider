@@ -31,6 +31,7 @@ struct p11prov_ctx {
     bool cache_pins;
     int cache_keys;
     int cache_sessions;
+    CK_SLOT_ID default_slot;
     bool encode_pkey_as_pk11_uri;
     bool assume_fips;
     /* TODO: ui_method */
@@ -635,6 +636,11 @@ int p11prov_ctx_cache_sessions(P11PROV_CTX *ctx)
 {
     P11PROV_debug("cache_sessions = %d", ctx->cache_sessions);
     return ctx->cache_sessions;
+}
+
+CK_SLOT_ID p11prov_ctx_default_slot(P11PROV_CTX *ctx)
+{
+    return ctx->default_slot;
 }
 
 bool p11prov_ctx_is_call_blocked(P11PROV_CTX *ctx, uint64_t mask)
@@ -1778,6 +1784,7 @@ enum p11prov_cfg_enum {
     P11PROV_CFG_ENCODE_PROVIDER_URI_TO_PEM,
     P11PROV_CFG_BLOCK_OPS,
     P11PROV_CFG_ASSUME_FIPS,
+    P11PROV_CFG_DEFAULT_SLOT,
     P11PROV_CFG_SIZE,
 };
 
@@ -1797,6 +1804,7 @@ static struct p11prov_cfg_names {
     { "pkcs11-module-encode-provider-uri-to-pem" },
     { "pkcs11-module-block-operations" },
     { "pkcs11-module-assume-fips" },
+    { "pkcs11-module-default-slot" },
 };
 
 int OSSL_provider_init(const OSSL_CORE_HANDLE *handle, const OSSL_DISPATCH *in,
@@ -2019,6 +2027,25 @@ int OSSL_provider_init(const OSSL_CORE_HANDLE *handle, const OSSL_DISPATCH *in,
         ctx->cache_sessions = MAX_CACHE_SESSIONS;
     }
     P11PROV_debug("Cache Sessions: %d", ctx->cache_sessions);
+
+    if (cfg[P11PROV_CFG_DEFAULT_SLOT] != NULL) {
+        CK_ULONG val;
+        ret =
+            parse_ulong(ctx, cfg[P11PROV_CFG_DEFAULT_SLOT],
+                        strlen(cfg[P11PROV_CFG_DEFAULT_SLOT]), (void **)&val);
+        if (ret != 0) {
+            P11PROV_raise(ctx, CKR_GENERAL_ERROR, "Invalid value for %s: (%s)",
+                          p11prov_cfg_names[P11PROV_CFG_DEFAULT_SLOT].name,
+                          cfg[P11PROV_CFG_DEFAULT_SLOT]);
+            p11prov_ctx_free(ctx);
+            return RET_OSSL_ERR;
+        }
+        ctx->default_slot = val;
+        P11PROV_debug("Default slot: %lu", ctx->default_slot);
+    } else {
+        ctx->default_slot = CK_UNAVAILABLE_INFORMATION;
+        P11PROV_debug("Default slot: not configured");
+    }
 
     if (cfg[P11PROV_CFG_ASSUME_FIPS] != NULL
         && strcmp(cfg[P11PROV_CFG_ASSUME_FIPS], "true") == 0) {
