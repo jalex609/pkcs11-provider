@@ -204,6 +204,7 @@ static CK_RV get_attrs_from_pkeyinfo(P11PROV_OBJ *key, CK_ATTRIBUTE *attrs,
         break;
     case CKK_EC:
     case CKK_EC_EDWARDS:
+    case CKK_EC_EDWARDS_LEGACY:
     case CKK_EC_MONTGOMERY:
         pubattrs[0].type = CKA_P11PROV_PUB_KEY;
         rv = p11prov_pkeyinfo_to_pubkey(pkeyinfo, &pubattrs[0]);
@@ -714,6 +715,7 @@ int p11prov_obj_export_public_key(P11PROV_OBJ *obj, OSSL_CALLBACK *cb_fn,
         return p11prov_obj_export_public_rsa_key(obj, cb_fn, cb_arg);
     case CKK_EC:
     case CKK_EC_EDWARDS:
+    case CKK_EC_EDWARDS_LEGACY:
     case CKK_EC_MONTGOMERY:
         return p11prov_obj_export_public_ec_key(obj, cb_fn, cb_arg);
     case CKK_ML_DSA:

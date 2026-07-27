@@ -26,10 +26,13 @@ static CK_RV p11prov_eddsa_set_mechanism(P11PROV_SIG_CTX *sigctx)
 
     switch (sigctx->mechtype) {
     case CKM_EDDSA:
+    case CKM_EDDSA_LEGACY:
         if (sigctx->use_eddsa_params == CK_TRUE) {
             sigctx->mechanism.pParameter = &sigctx->eddsa_params;
             sigctx->mechanism.ulParameterLen = sizeof(sigctx->eddsa_params);
         }
+        break;
+    case CKM_ECDSA:
         break;
     default:
         return CKR_DATA_INVALID;
@@ -41,7 +44,7 @@ static CK_RV p11prov_eddsa_set_mechanism(P11PROV_SIG_CTX *sigctx)
 static CK_RV p11prov_eddsa_sig_size(P11PROV_SIG_CTX *sigctx, size_t *siglen)
 {
     CK_KEY_TYPE type = p11prov_obj_get_key_type(sigctx->key);
-    if (type == CKK_EC_EDWARDS) {
+    if (type == CKK_EC_EDWARDS || type == CKK_EC_EDWARDS_LEGACY) {
         CK_ULONG size = p11prov_obj_get_key_size(sigctx->key);
         if (size == ED25519_BYTE_SIZE) {
             *siglen = ED25519_SIG_SIZE;
@@ -59,8 +62,39 @@ static CK_RV p11prov_eddsa_sig_size(P11PROV_SIG_CTX *sigctx, size_t *siglen)
 static void *p11prov_eddsa_newctx(void *provctx, const char *properties)
 {
     P11PROV_CTX *ctx = (P11PROV_CTX *)provctx;
+    return p11prov_sig_newctx(ctx, 0, properties);
+}
 
-    return p11prov_sig_newctx(ctx, CKM_EDDSA, properties);
+static int select_eddsa_mech(P11PROV_SIG_CTX *ctx)
+{
+    CK_SLOT_ID slot_id;
+    CK_MECHANISM_INFO info;
+    CK_RV rv;
+
+    if (ctx->mechtype != 0)
+        return 1; // already selected
+
+    // Get slot from key object
+    slot_id = p11prov_obj_get_slotid(ctx->key);
+    if (slot_id == CK_UNAVAILABLE_INFORMATION)
+        return 0;
+
+    // Try standard EDDSA mech
+    rv = p11prov_GetMechanismInfo(ctx->provctx, slot_id, CKM_EDDSA, &info);
+    if (rv == CKR_OK && (info.flags & CKF_SIGN)) {
+        ctx->mechtype = CKM_EDDSA;
+        return 1;
+    }
+
+    // Try legacy EDDSA mech, fallback to ECDSA, since it is masked as that on some vendors
+    rv = p11prov_GetMechanismInfo(ctx->provctx, slot_id, CKM_EDDSA_LEGACY, &info);
+    if (rv == CKR_OK && (info.flags & CKF_SIGN)) {
+        ctx->mechtype = CKM_EDDSA_LEGACY;
+    } else {
+        ctx->mechtype = CKM_ECDSA;
+    }
+
+    return 1;
 }
 
 static CK_RV p11prov_eddsa_init_instance(void *vctx)
@@ -231,7 +265,7 @@ static int p11prov_eddsa_get_ctx_params(void *ctx, OSSL_PARAM *params)
 
     p = OSSL_PARAM_locate(params, OSSL_SIGNATURE_PARAM_ALGORITHM_ID);
     if (p) {
-        if (sigctx->mechtype != CKM_EDDSA) {
+        if (sigctx->mechtype != CKM_EDDSA && sigctx->mechtype != CKM_EDDSA_LEGACY && sigctx->mechtype != CKM_ECDSA) {
             return RET_OSSL_ERR;
         }
         CK_ULONG size = p11prov_obj_get_key_bit_size(sigctx->key);
@@ -335,6 +369,7 @@ static int p11prov_eddsa_set_ctx_params(void *ctx, const OSSL_PARAM params[])
         }
         sigctx->eddsa_params.ulContextDataLen = datalen;
     }
+    select_eddsa_mech(sigctx);
 
     return p11prov_eddsa_instance_to_params(ctx);
 }

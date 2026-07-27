@@ -48,6 +48,9 @@ const struct fetch_attrs EC_private_attrs[] = {
 #define EC_EDWARDS_private_attrs EC_private_attrs
 #define EC_MONTGOMERY_public_attrs EC_public_attrs
 #define EC_MONTGOMERY_private_attrs EC_private_attrs
+#define EC_EDWARDS_LEGACY_public_attrs EC_public_attrs
+#define EC_EDWARDS_LEGACY_private_attrs EC_private_attrs
+
 
 /* pre_process_ec_key_data() may add:
  * - CKA_P11PROV_CURVE_NID
@@ -114,6 +117,7 @@ const struct key_attrs {
     /* EC keys require 3 extra allocations for synthetic attributes */
     FILL_ATTRS(EC, 1 + EXTRA_EC_PARAMS),
     FILL_ATTRS(EC_EDWARDS, 1 + EXTRA_EC_PARAMS),
+    FILL_ATTRS(EC_EDWARDS_LEGACY, 1+ EXTRA_EC_PARAMS),
     FILL_ATTRS(EC_MONTGOMERY, 1 + EXTRA_EC_PARAMS),
     FILL_ATTRS(ML_DSA, 1),
     FILL_ATTRS(ML_KEM, 1),
@@ -203,6 +207,7 @@ static CK_RV fetch_key(P11PROV_CTX *ctx, P11PROV_SESSION *session,
         return CKR_OK;
     case CKK_EC:
     case CKK_EC_EDWARDS:
+    case CKK_EC_EDWARDS_LEGACY:
     case CKK_EC_MONTGOMERY:
         /* decode CKA_EC_PARAMS and store some extra attrs for convenience */
         return pre_process_ec_key_data(key);
@@ -279,6 +284,10 @@ static CK_RV pre_process_ec_key_data(P11PROV_OBJ *key)
     }
 
     type = p11prov_obj_get_key_type(key);
+    if (type == CKK_EC && is_edwards_ec_params(attr)) {
+        type = CKK_EC_EDWARDS_LEGACY;
+        key->data.key.type = CKK_EC_EDWARDS_LEGACY;
+    }
     if (type == CKK_EC) {
         EC_GROUP *group = NULL;
         /* in d2i functions 'in' is overwritten to return the remainder of

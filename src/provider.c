@@ -934,6 +934,7 @@ static CK_RV operations_init(P11PROV_CTX *ctx)
                              CKM_HKDF_DERIVE,
                              DIGEST_MECHS,
                              CKM_EDDSA,
+                             CKM_EDDSA_LEGACY,
                              PQC_MECHS,
 #if SKEY_SUPPORT == 1
                              AES_MECHS
@@ -1219,11 +1220,13 @@ static CK_RV operations_init(P11PROV_CTX *ctx)
                 break;
             case CKM_EDDSA:
             case CKM_EC_EDWARDS_KEY_PAIR_GEN:
+            case CKM_EDDSA_LEGACY:
+            case CKM_EC_EDWARDS_KEY_PAIR_GEN_LEGACY:
                 ADD_ALGO_EXT(ED25519, signature, prop,
                              p11prov_ed25519_signature_functions);
                 ADD_ALGO_EXT(ED448, signature, prop,
                              p11prov_ed448_signature_functions);
-                UNCHECK_MECHS(CKM_EC_EDWARDS_KEY_PAIR_GEN, CKM_EDDSA);
+                UNCHECK_MECHS(CKM_EC_EDWARDS_KEY_PAIR_GEN, CKM_EDDSA, CKM_EC_EDWARDS_KEY_PAIR_GEN_LEGACY);
 #if defined(OSSL_FUNC_SIGNATURE_SIGN_MESSAGE_INIT)
                 ADD_ALGO_EXT(ED25519ph, signature, prop,
                              p11prov_ed25519ph_signature_functions);
@@ -1338,6 +1341,11 @@ static CK_RV operations_init(P11PROV_CTX *ctx)
     if (add_rsaenc) {
         ADD_ALGO(RSA, rsa, asym_cipher, prop);
     }
+
+    ADD_ALGO_EXT(ED25519, signature, prop, p11prov_ed25519_signature_functions);
+    ADD_ALGO_EXT(ED448, signature, prop, p11prov_ed448_signature_functions);
+    UNCHECK_MECHS(CKM_EC_EDWARDS_KEY_PAIR_GEN, CKM_EDDSA,
+                  CKM_EC_EDWARDS_KEY_PAIR_GEN_LEGACY);
     /* terminations */
     TERM_ALGO(digest);
     TERM_ALGO(kdf);

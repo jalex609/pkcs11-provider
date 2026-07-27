@@ -5,6 +5,7 @@
 #define _OBJ_INTERNAL_H_
 
 #include "provider.h"
+#include <stdbool.h>
 
 struct p11prov_key {
     CK_KEY_TYPE type;
@@ -62,6 +63,9 @@ CK_RV get_attrs_from_cert(P11PROV_OBJ *crt, CK_ATTRIBUTE *attrs, int num);
 CK_RV p11prov_match_curve(CK_KEY_TYPE type, CK_ATTRIBUTE *attr,
                           const char **curve_name, int *curve_nid,
                           CK_ULONG *key_bit_size, CK_ULONG *key_size);
+bool is_edwards_ec_params(CK_ATTRIBUTE *attr);
+bool is_ed448_ec_params(CK_ATTRIBUTE *attr);
+bool is_ed25519_ec_params(CK_ATTRIBUTE *attr);
 
 #define CKA_P11PROV_CURVE_NAME CKA_P11PROV_BASE + 1
 #define CKA_P11PROV_CURVE_NID CKA_P11PROV_BASE + 2

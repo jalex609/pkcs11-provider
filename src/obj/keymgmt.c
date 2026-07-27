@@ -109,7 +109,7 @@ int p11prov_obj_get_ed_pub_key(P11PROV_OBJ *obj, CK_ATTRIBUTE **pub)
 
     P11PROV_debug("get ed pubkey %p", obj);
 
-    ret = prep_get_pub_key(&obj, CKK_EC_EDWARDS);
+    ret = prep_get_pub_key(&obj, CKK_EC_EDWARDS_LEGACY);
     if (ret != RET_OSSL_OK) {
         return ret;
     }
@@ -452,6 +452,7 @@ CK_RV p11prov_obj_set_ec_encoded_public_key(P11PROV_OBJ *key,
     default:
         P11PROV_raise(key->ctx, CKR_KEY_INDIGESTIBLE,
                       "Invalid Key type, not an EC/ED key");
+        P11PROV_debug("Here 7");
         rv = CKR_KEY_INDIGESTIBLE;
         goto done;
     }
@@ -602,6 +603,7 @@ static int cmp_public_key_values(P11PROV_OBJ *pub_key1, P11PROV_OBJ *pub_key2)
         break;
     case CKK_EC:
     case CKK_EC_EDWARDS:
+    case CKK_EC_EDWARDS_LEGACY:
     case CKK_EC_MONTGOMERY:
         ret = cmp_attr(pub_key1, pub_key2, CKA_P11PROV_PUB_KEY);
         break;
@@ -639,6 +641,7 @@ static int match_key_with_cert(P11PROV_OBJ *priv_key, P11PROV_OBJ *pub_key)
         break;
     case CKK_EC:
     case CKK_EC_EDWARDS:
+    case CKK_EC_EDWARDS_LEGACY:
         attrs[0].type = CKA_P11PROV_PUB_KEY;
         num = 1;
         break;
@@ -836,6 +839,7 @@ int p11prov_obj_key_cmp(P11PROV_OBJ *key1, P11PROV_OBJ *key2, CK_KEY_TYPE type,
         break;
 
     case CKK_EC_EDWARDS:
+    case CKK_EC_EDWARDS_LEGACY:
     case CKK_EC_MONTGOMERY:
         /* The Edwards/Montgomery params can be encoded as printable string,
          * which is not recognized by OpenSSL and does not have an EC_GROUP */
@@ -925,6 +929,8 @@ const CK_BYTE x448_ec_params[] = { X448_EC_PARAMS };
 #define X448_OID 0x06, 0x03, 0x2B, 0x65, 0x6F
 #define ED25519_OID 0x06, 0x03, 0x2B, 0x65, 0x70
 #define ED448_OID 0x06, 0x03, 0x2B, 0x65, 0x71
+#define ED25519_OID_GNU 0x06, 0x09, 0x2B, 0x06, 0x01, 0x04, 0x01, 0xDA, 0x47, 0x0F, 0x01
+#define ED448_OID_VENDOR 0x06, 0x09, 0x2b, 0x06, 0x01, 0x04, 0x01, 0xda, 0x47, 0x0f, 0x02
 const CK_BYTE x25519_oid[] = { X25519_OID };
 const CK_BYTE x448_oid[] = { X448_OID };
 const CK_BYTE ed25519_oid[] = { ED25519_OID };
@@ -937,6 +943,9 @@ const CK_BYTE ed448_oid[] = { ED448_OID };
     0x06, 0x0A, 0x2B, 0x06, 0x01, 0x04, 0x01, 0x95, 0x55, 0x01, 0x05, 0x01
 const CK_BYTE ed25519_luna[] = { ED25519_LUNA };
 const CK_BYTE x25519_luna[] = { X25519_LUNA };
+
+const CK_BYTE ed25519_oid_gnu[] = { ED25519_OID_GNU };
+const CK_BYTE ed448_oid_vendor[] = { ED448_OID_VENDOR };
 
 struct match_curve {
     const CK_BYTE *params;
@@ -958,6 +967,10 @@ struct match_curve ed_params_table[] = {
       ED448_BIT_SIZE, ED448_BYTE_SIZE },
     { ed25519_luna, sizeof(ed25519_luna), ED25519, NID_ED25519,
       ED25519_BIT_SIZE, ED25519_BYTE_SIZE },
+    { ed25519_oid_gnu, sizeof(ed25519_oid_gnu), ED25519, NID_ED25519, ED25519_BIT_SIZE,
+      ED25519_BYTE_SIZE },
+    { ed448_oid_vendor, sizeof(ed448_oid_vendor), ED448, NID_ED448, ED448_BIT_SIZE,
+      ED448_BYTE_SIZE },
 };
 
 struct match_curve x_params_table[] = {
@@ -981,7 +994,7 @@ CK_RV p11prov_match_curve(CK_KEY_TYPE type, CK_ATTRIBUTE *attr,
     struct match_curve *table = NULL;
     int table_size = 0;
 
-    if (type == CKK_EC_EDWARDS) {
+    if (type == CKK_EC_EDWARDS || type == CKK_EC_EDWARDS_LEGACY) {
         table = ed_params_table;
         table_size = sizeof(ed_params_table) / sizeof(struct match_curve);
     } else if (type == CKK_EC_MONTGOMERY) {
@@ -1009,6 +1022,28 @@ CK_RV p11prov_match_curve(CK_KEY_TYPE type, CK_ATTRIBUTE *attr,
     }
     return rv;
 }
+
+bool is_edwards_ec_params(CK_ATTRIBUTE *attr)
+{
+    return
+        (attr->ulValueLen == sizeof(ed25519_oid) &&
+         memcmp(attr->pValue, ed25519_oid, sizeof(ed25519_oid)) == 0) ||
+
+        (attr->ulValueLen == sizeof(ed448_oid) &&
+         memcmp(attr->pValue, ed448_oid, sizeof(ed448_oid)) == 0);
+}
+
+bool is_ed448_ec_params(CK_ATTRIBUTE *attr) {
+    return (attr->ulValueLen == sizeof(ed448_oid) &&
+         memcmp(attr->pValue, ed448_oid, sizeof(ed448_oid)) == 0);
+}
+
+bool is_ed25519_ec_params(CK_ATTRIBUTE *attr) {
+    return (attr->ulValueLen == sizeof(ed25519_oid) &&
+         memcmp(attr->pValue, ed25519_oid, sizeof(ed25519_oid)) == 0);
+}
+
+
 
 /* This function attempts to return a public key from a private one.
  *
@@ -1061,3 +1096,4 @@ P11PROV_OBJ *p11prov_obj_pub_from_priv(P11PROV_OBJ *priv)
 
     return key;
 }
+
