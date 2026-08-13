@@ -2,6 +2,7 @@
    SPDX-License-Identifier: Apache-2.0 */
 
 #include "obj/internal.h"
+#include <openssl/bio.h>
 
 bool p11prov_obj_is_rsa_pss(P11PROV_OBJ *obj)
 {
@@ -408,6 +409,53 @@ CK_ATTRIBUTE *p11prov_obj_get_ec_public_raw(P11PROV_OBJ *key)
     return pub_key;
 }
 
+/* Cache the encoded public key directly on a private key object.
+ * This allows key matching without needing CKA_EC_POINT on the HSM token.
+ * Only works for imported (in-memory) keys - token keys cannot be modified. */
+CK_RV set_private_key_cached_pub_key(P11PROV_OBJ *key,
+                                            const void *pubkey, size_t pubkey_len)
+{
+    CK_ATTRIBUTE *existing;
+    CK_ATTRIBUTE *new_pub_attr;
+    void *ptr;
+
+    if (key->class != CKO_PRIVATE_KEY) {
+        return CKR_KEY_INDIGESTIBLE;
+    }
+
+    existing = p11prov_obj_get_attr(key, CKA_P11PROV_PUB_KEY);
+    if (!existing) {
+        /* Need to allocate space for one more attribute */
+        ptr = OPENSSL_realloc(key->attrs,
+                              sizeof(CK_ATTRIBUTE) * (key->numattrs + 1));
+        if (!ptr) {
+            P11PROV_raise(key->ctx, CKR_HOST_MEMORY,
+                          "Failed to allocate memory for cached pub key");
+            return CKR_HOST_MEMORY;
+        }
+        key->attrs = ptr;
+        new_pub_attr = &key->attrs[key->numattrs];
+        key->numattrs += 1;
+        memset(new_pub_attr, 0, sizeof(CK_ATTRIBUTE));
+    } else {
+        /* Replace existing cached value */
+        OPENSSL_free(existing->pValue);
+        new_pub_attr = existing;
+        memset(new_pub_attr, 0, sizeof(CK_ATTRIBUTE));
+    }
+
+    new_pub_attr->type = CKA_P11PROV_PUB_KEY;
+    new_pub_attr->pValue = OPENSSL_malloc(pubkey_len);
+    if (!new_pub_attr->pValue) {
+        P11PROV_raise(key->ctx, CKR_HOST_MEMORY, "Failed to copy pub key");
+        return CKR_HOST_MEMORY;
+    }
+    memcpy(new_pub_attr->pValue, pubkey, pubkey_len);
+    new_pub_attr->ulValueLen = (CK_ULONG)pubkey_len;
+
+    return CKR_OK;
+}
+
 CK_RV p11prov_obj_set_ec_encoded_public_key(P11PROV_OBJ *key,
                                             const void *pubkey,
                                             size_t pubkey_len)
@@ -422,10 +470,6 @@ CK_RV p11prov_obj_set_ec_encoded_public_key(P11PROV_OBJ *key,
     int len;
 
     if (key->handle != CK_P11PROV_IMPORTED_HANDLE) {
-        /*
-         * not a mock object, cannot set public key to a token object backed by
-         * an actual handle.
-         */
         /* not matching, error out */
         P11PROV_raise(key->ctx, CKR_KEY_INDIGESTIBLE,
                       "Cannot change public key of a token object");
@@ -604,9 +648,26 @@ static int cmp_public_key_values(P11PROV_OBJ *pub_key1, P11PROV_OBJ *pub_key2)
     case CKK_EC:
     case CKK_EC_EDWARDS:
     case CKK_EC_EDWARDS_LEGACY:
-    case CKK_EC_MONTGOMERY:
-        ret = cmp_attr(pub_key1, pub_key2, CKA_P11PROV_PUB_KEY);
+    case CKK_EC_MONTGOMERY: {
+        CK_ATTRIBUTE *x1 = NULL;
+        CK_ATTRIBUTE *x2 = NULL;
+
+        /* Fast path: compare cached EC_POINT values directly */
+        x1 = p11prov_obj_get_attr(pub_key1, CKA_P11PROV_PUB_KEY);
+        x2 = p11prov_obj_get_attr(pub_key2, CKA_P11PROV_PUB_KEY);
+
+        if (x1 && x2) {
+            if (x1->ulValueLen == x2->ulValueLen
+                && memcmp(x1->pValue, x2->pValue, x1->ulValueLen) == 0) {
+                P11PROV_debug("cmp_public_key_values: EC key MATCHED (via cached EC_POINT)");
+                ret = RET_OSSL_OK;
+            } else {
+                P11PROV_debug("cmp_public_key_values: EC_POINT mismatch");
+                ret = RET_OSSL_ERR;
+            }
+        }
         break;
+    }
     case CKK_ML_DSA:
     case CKK_ML_KEM:
         ret = cmp_attr(pub_key1, pub_key2, CKA_VALUE);
