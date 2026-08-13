@@ -398,6 +398,10 @@ static CK_RV p11prov_sig_operate_init(P11PROV_SIG_CTX *sigctx, bool digest_op,
 
     P11PROV_debug_mechanism(sigctx->provctx, slotid,
                             sigctx->mechanism.mechanism);
+    P11PROV_debug("sig operate init: op=%s, key handle=%lu, slot=%lu, "
+                  "mech=0x%lx (sigctx=%p)",
+                  (sigctx->operation == CKF_SIGN) ? "sign" : "verify", handle,
+                  slotid, sigctx->mechanism.mechanism, (void *)sigctx);
 
     if (sigctx->operation == CKF_SIGN) {
         reqlogin = true;
@@ -418,6 +422,11 @@ static CK_RV p11prov_sig_operate_init(P11PROV_SIG_CTX *sigctx, bool digest_op,
         }
         if (ret == CKR_OK) {
             sigctx->session_state = SESS_INITIALIZED;
+        } else {
+            P11PROV_raise(sigctx->provctx, ret,
+                          "C_%sInit failed (handle=%lu, slot=%lu, mech=0x%lx)",
+                          (sigctx->operation == CKF_SIGN) ? "Sign" : "Verify",
+                          handle, slotid, sigctx->mechanism.mechanism);
         }
         break;
     case CKR_MECHANISM_INVALID:
@@ -484,6 +493,9 @@ CK_RV p11prov_sig_operate(P11PROV_SIG_CTX *sigctx, unsigned char *sig,
         if (siglen) {
             *siglen = sig_size;
         }
+    } else {
+        P11PROV_raise(sigctx->provctx, ret, "C_%s failed",
+                      (sigctx->operation == CKF_SIGN) ? "Sign" : "Verify");
     }
 
     p11prov_return_session(session);
@@ -508,6 +520,8 @@ int p11prov_sig_digest_update(P11PROV_SIG_CTX *sigctx, unsigned char *data,
     }
 
     if (!sigctx->session) {
+        P11PROV_raise(sigctx->provctx, CKR_GENERAL_ERROR,
+                      "No initialized session in digest update");
         return RET_OSSL_ERR;
     }
 
@@ -519,6 +533,8 @@ int p11prov_sig_digest_update(P11PROV_SIG_CTX *sigctx, unsigned char *data,
         ret = p11prov_VerifyUpdate(sigctx->provctx, sess, data, datalen);
     }
     if (ret != CKR_OK) {
+        P11PROV_raise(sigctx->provctx, ret, "C_%sUpdate failed",
+                      (sigctx->operation == CKF_SIGN) ? "Sign" : "Verify");
         p11prov_return_session(sigctx->session);
         sigctx->session = NULL;
         return RET_OSSL_ERR;
@@ -625,6 +641,8 @@ int p11prov_sig_digest_final(P11PROV_SIG_CTX *sigctx, unsigned char *sig,
     }
 
     if (!sigctx->session) {
+        P11PROV_raise(sigctx->provctx, CKR_GENERAL_ERROR,
+                      "No initialized session in digest final");
         goto done;
     }
 
@@ -640,6 +658,9 @@ int p11prov_sig_digest_final(P11PROV_SIG_CTX *sigctx, unsigned char *sig,
             *siglen = sig_size;
         }
         result = RET_OSSL_OK;
+    } else {
+        P11PROV_raise(sigctx->provctx, ret, "C_%sFinal failed",
+                      (sigctx->operation == CKF_SIGN) ? "Sign" : "Verify");
     }
 
 done:

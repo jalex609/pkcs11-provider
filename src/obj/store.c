@@ -648,8 +648,9 @@ CK_RV p11prov_obj_copy_key_data(P11PROV_OBJ *dst, P11PROV_OBJ *src)
     CK_RV rv;
 
     P11PROV_debug("duplicating obj key (dst=%p, src=%p, handle=%lu, "
-                  "slotid=%lu, raf=%d, numattrs=%d)",
-                  dst, src, src->handle, src->slotid, src->raf, src->numattrs);
+                  "slotid=%lu, raf=%d, numattrs=%d, class=%lu, token=%d)",
+                  dst, src, src->handle, src->slotid, src->raf, src->numattrs,
+                  src->class, (int)src->cka_token);
 
     /* we don't overwrite real key objects */
     if (dst->poolid != -1) {
