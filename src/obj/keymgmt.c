@@ -2,6 +2,70 @@
    SPDX-License-Identifier: Apache-2.0 */
 
 #include "obj/internal.h"
+#include <openssl/bio.h>
+
+/* Helper to get key type name as string for logging */
+static const char *key_type_name(CK_KEY_TYPE type)
+{
+    switch (type) {
+    case CKK_RSA:
+        return "RSA";
+    case CKK_EC:
+        return "EC";
+    case CKK_EC_EDWARDS:
+        return "EC_EDWARDS";
+    case CKK_EC_EDWARDS_LEGACY:
+        return "EC_EDWARDS_LEGACY";
+    case CKK_EC_MONTGOMERY:
+        return "EC_MONTGOMERY";
+    case CKK_ML_DSA:
+        return "ML_DSA";
+    case CKK_ML_KEM:
+        return "ML_KEM";
+    default:
+        return "UNKNOWN";
+    }
+}
+
+/* Helper to get object class name as string for logging */
+static const char *class_name(CK_OBJECT_CLASS cls)
+{
+    switch (cls) {
+    case CKO_PUBLIC_KEY:
+        return "PUBLIC_KEY";
+    case CKO_PRIVATE_KEY:
+        return "PRIVATE_KEY";
+    case CKO_CERTIFICATE:
+        return "CERTIFICATE";
+    default:
+        return "UNKNOWN";
+    }
+}
+
+/* Helper to hex dump binary data for logging */
+static void debug_hex_dump(const char *prefix, const void *data, size_t len)
+{
+    if (!data || len == 0) {
+        P11PROV_debug("%s: (null or empty)", prefix);
+        return;
+    }
+
+    /* Limit output for very large values */
+    size_t max_len = (len > 64) ? 64 : len;
+    const unsigned char *p = (const unsigned char *)data;
+
+    char hex[128];
+    size_t hex_pos = 0;
+    for (size_t i = 0; i < max_len; i++) {
+        hex_pos += snprintf(hex + hex_pos, sizeof(hex) - hex_pos, "%02x", p[i]);
+    }
+
+    if (len > 64) {
+        P11PROV_debug("%s: %s... (truncated, total %zu bytes)", prefix, hex, len);
+    } else {
+        P11PROV_debug("%s: %s (len=%zu)", prefix, hex, len);
+    }
+}
 
 bool p11prov_obj_is_rsa_pss(P11PROV_OBJ *obj)
 {
@@ -545,21 +609,31 @@ static int cmp_bn_attr(P11PROV_OBJ *key1, P11PROV_OBJ *key2,
 
     /* is BN ?*/
     if (attr != CKA_MODULUS && attr != CKA_PUBLIC_EXPONENT) {
+        P11PROV_debug("cmp_bn_attr: attr %lu not BN (only MODULUS or PUBLIC_EXPONENT supported)", attr);
         return rc;
     }
+
+    const char *attr_name = (attr == CKA_MODULUS) ? "CKA_MODULUS" : "CKA_PUBLIC_EXPONENT";
+    P11PROV_debug("cmp_bn_attr: comparing %s", attr_name);
 
     x1 = p11prov_obj_get_attr(key1, attr);
     x2 = p11prov_obj_get_attr(key2, attr);
 
     if (!x1 || !x2) {
+        P11PROV_debug("cmp_bn_attr: %s missing - x1=%p, x2=%p", attr_name, (void*)x1, (void*)x2);
         return rc;
     }
+
+    P11PROV_debug("cmp_bn_attr: %s key1 len=%lu, key2 len=%lu", attr_name, x1->ulValueLen, x2->ulValueLen);
 
     bx1 = BN_native2bn(x1->pValue, x1->ulValueLen, NULL);
     bx2 = BN_native2bn(x2->pValue, x2->ulValueLen, NULL);
 
     if (BN_cmp(bx1, bx2) == 0) {
         rc = RET_OSSL_OK;
+        P11PROV_debug("cmp_bn_attr: %s MATCH", attr_name);
+    } else {
+        P11PROV_debug("cmp_bn_attr: %s MISMATCH", attr_name);
     }
 
     BN_free(bx1);
@@ -576,14 +650,20 @@ static int cmp_attr(P11PROV_OBJ *key1, P11PROV_OBJ *key2,
     x1 = p11prov_obj_get_attr(key1, attr);
     x2 = p11prov_obj_get_attr(key2, attr);
     if (!x1 || !x2) {
+        P11PROV_debug("cmp_attr: attr %lu missing - x1=%p, x2=%p", attr, (void*)x1, (void*)x2);
         return RET_OSSL_ERR;
     }
     if (x1->ulValueLen != x2->ulValueLen) {
+        P11PROV_debug("cmp_attr: attr %lu MISMATCH length - key1=%lu, key2=%lu", attr, x1->ulValueLen, x2->ulValueLen);
         return RET_OSSL_ERR;
     }
     if (memcmp(x1->pValue, x2->pValue, x1->ulValueLen) != 0) {
+        P11PROV_debug("cmp_attr: attr %lu MISMATCH data", attr);
+        debug_hex_dump("cmp_attr: key1 data", x1->pValue, x1->ulValueLen);
+        debug_hex_dump("cmp_attr: key2 data", x2->pValue, x2->ulValueLen);
         return RET_OSSL_ERR;
     }
+    P11PROV_debug("cmp_attr: attr %lu MATCH", attr);
     return RET_OSSL_OK;
 }
 
@@ -591,30 +671,64 @@ static int cmp_public_key_values(P11PROV_OBJ *pub_key1, P11PROV_OBJ *pub_key2)
 {
     int ret;
 
+    P11PROV_debug("cmp_public_key_values: ENTER");
+    P11PROV_debug("cmp_public_key_values: key1 ptr=%p, class=%s (%u), type=%s (%u), handle=%lu",
+                  (void*)pub_key1, class_name(pub_key1->class), pub_key1->class,
+                  key_type_name(pub_key1->data.key.type), pub_key1->data.key.type,
+                  pub_key1->handle);
+    P11PROV_debug("cmp_public_key_values: key2 ptr=%p, class=%s (%u), type=%s (%u), handle=%lu",
+                  (void*)pub_key2, class_name(pub_key2->class), pub_key2->class,
+                  key_type_name(pub_key2->data.key.type), pub_key2->data.key.type,
+                  pub_key2->handle);
+
     switch (pub_key1->data.key.type) {
     case CKK_RSA:
+        P11PROV_debug("cmp_public_key_values: RSA key comparison");
         /* pub_key1 pub_key2 could be CKO_PRIVATE_KEY here but
          * nevertheless contain these two attributes */
         ret = cmp_bn_attr(pub_key1, pub_key2, CKA_MODULUS);
         if (ret == RET_OSSL_ERR) {
+            P11PROV_debug("cmp_public_key_values: RSA MODULUS comparison FAILED");
             break;
         }
         ret = cmp_bn_attr(pub_key1, pub_key2, CKA_PUBLIC_EXPONENT);
+        if (ret == RET_OSSL_OK) {
+            P11PROV_debug("cmp_public_key_values: RSA key MATCHED");
+        } else {
+            P11PROV_debug("cmp_public_key_values: RSA PUBLIC_EXPONENT comparison FAILED");
+        }
         break;
     case CKK_EC:
     case CKK_EC_EDWARDS:
     case CKK_EC_EDWARDS_LEGACY:
     case CKK_EC_MONTGOMERY:
+        P11PROV_debug("cmp_public_key_values: EC/Edwards/Montgomery key comparison (type=%s)",
+                      key_type_name(pub_key1->data.key.type));
         ret = cmp_attr(pub_key1, pub_key2, CKA_P11PROV_PUB_KEY);
+        if (ret == RET_OSSL_OK) {
+            P11PROV_debug("cmp_public_key_values: EC key MATCHED");
+        } else {
+            P11PROV_debug("cmp_public_key_values: EC key MISMATCHED");
+        }
         break;
     case CKK_ML_DSA:
     case CKK_ML_KEM:
+        P11PROV_debug("cmp_public_key_values: ML_DSA/ML_KEM key comparison (type=%s)",
+                      key_type_name(pub_key1->data.key.type));
         ret = cmp_attr(pub_key1, pub_key2, CKA_VALUE);
+        if (ret == RET_OSSL_OK) {
+            P11PROV_debug("cmp_public_key_values: ML key MATCHED");
+        } else {
+            P11PROV_debug("cmp_public_key_values: ML key MISMATCHED");
+        }
         break;
     default:
+        P11PROV_debug("cmp_public_key_values: unsupported key type %u", pub_key1->data.key.type);
         ret = RET_OSSL_ERR;
     }
 
+    P11PROV_debug("cmp_public_key_values: EXIT with ret=%d (%s)", ret,
+                  ret == RET_OSSL_OK ? "MATCH" : "MISMATCH/ERROR");
     return ret;
 }
 
@@ -688,48 +802,77 @@ static int match_public_keys(P11PROV_OBJ *key1, P11PROV_OBJ *key2)
     P11PROV_OBJ *priv_key;
     int ret = RET_OSSL_ERR;
 
+    P11PROV_debug("match_public_keys: ENTER");
+    P11PROV_debug("match_public_keys: key1 ptr=%p, class=%s (%u), type=%s (%u), handle=%lu, slotid=%lu",
+                  (void*)key1, class_name(key1->class), key1->class,
+                  key_type_name(key1->data.key.type), key1->data.key.type,
+                  key1->handle, key1->slotid);
+    P11PROV_debug("match_public_keys: key2 ptr=%p, class=%s (%u), type=%s (%u), handle=%lu, slotid=%lu",
+                  (void*)key2, class_name(key2->class), key2->class,
+                  key_type_name(key2->data.key.type), key2->data.key.type,
+                  key2->handle, key2->slotid);
+
     /* avoid round-trip to HSM if keys have enough
      * attributes to do the logical comparison
      * CKK_RSA: MODULUS / PUBLIC_EXPONENT
      * CKK_EC: EC_POINT
      */
+    P11PROV_debug("match_public_keys: attempting direct comparison via cmp_public_key_values");
     ret = cmp_public_key_values(key1, key2);
     if (ret != RET_OSSL_ERR) {
+        P11PROV_debug("match_public_keys: direct comparison succeeded (ret=%d), returning", ret);
         return ret;
     }
+    P11PROV_debug("match_public_keys: direct comparison failed, need to look up associated keys");
 
     /* one of the keys or both are private */
     if (key1->class == CKO_PUBLIC_KEY && key2->class == CKO_PRIVATE_KEY) {
         pub_key = key1;
         priv_key = key2;
+        P11PROV_debug("match_public_keys: key1 is PUBLIC_KEY, key2 is PRIVATE_KEY");
     } else if (key1->class == CKO_PRIVATE_KEY
                && key2->class == CKO_PUBLIC_KEY) {
         pub_key = key2;
         priv_key = key1;
+        P11PROV_debug("match_public_keys: key1 is PRIVATE_KEY, key2 is PUBLIC_KEY");
     } else {
-        P11PROV_debug("We can't really match private keys");
+        P11PROV_debug("match_public_keys: We can't really match private keys (both are same class)");
         return RET_OSSL_ERR;
     }
 
+    P11PROV_debug("match_public_keys: looking up associated public key for priv_key ptr=%p", (void*)priv_key);
     assoc_pub_key = p11prov_obj_find_associated(priv_key, CKO_PUBLIC_KEY);
     if (!assoc_pub_key) {
+        P11PROV_debug("match_public_keys: no associated public key found, trying match_key_with_cert");
         P11PROV_raise(priv_key->ctx, CKR_GENERAL_ERROR,
                       "Could not find associated public key object");
 
         /* some tokens only store the public key in a cert and not in a
          * separate public key object */
-        return match_key_with_cert(priv_key, pub_key);
+        ret = match_key_with_cert(priv_key, pub_key);
+        P11PROV_debug("match_public_keys: match_key_with_cert returned %d", ret);
+        return ret;
     }
 
+    P11PROV_debug("match_public_keys: found associated public key ptr=%p", (void*)assoc_pub_key);
+    P11PROV_debug("match_public_keys: assoc_pub_key type=%s (%u), pub_key type=%s (%u)",
+                  key_type_name(assoc_pub_key->data.key.type), assoc_pub_key->data.key.type,
+                  key_type_name(pub_key->data.key.type), pub_key->data.key.type);
+
     if (assoc_pub_key->data.key.type != pub_key->data.key.type) {
+        P11PROV_debug("match_public_keys: key type mismatch between pub_key and assoc_pub_key");
         goto done;
     }
 
+    P11PROV_debug("match_public_keys: comparing pub_key with assoc_pub_key");
     ret = cmp_public_key_values(pub_key, assoc_pub_key);
 
 done:
+    P11PROV_debug("match_public_keys: releasing assoc_pub_key");
     p11prov_obj_free(assoc_pub_key);
 
+    P11PROV_debug("match_public_keys: EXIT with ret=%d (%s)", ret,
+                  ret == RET_OSSL_OK ? "MATCH" : "MISMATCH/ERROR");
     return ret;
 }
 
