@@ -511,7 +511,7 @@ CK_RV p11prov_sig_operate(P11PROV_SIG_CTX *sigctx, unsigned char *sig,
                       p11prov_obj_get_handle(sigctx->key),
                       p11prov_obj_get_slotid(sigctx->key),
                       p11prov_obj_get_class(sigctx->key),
-                      sigctx->key->data.key.type);
+                      p11prov_obj_get_key_type(sigctx->key));
     }
 
     /* Log mechanism info */
