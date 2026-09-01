@@ -706,9 +706,17 @@ static int cmp_public_key_values(P11PROV_OBJ *pub_key1, P11PROV_OBJ *pub_key2)
                       key_type_name(pub_key1->data.key.type));
         ret = cmp_attr(pub_key1, pub_key2, CKA_P11PROV_PUB_KEY);
         if (ret == RET_OSSL_OK) {
-            P11PROV_debug("cmp_public_key_values: EC key MATCHED");
+            P11PROV_debug("cmp_public_key_values: EC key MATCHED (via EC_POINT)");
         } else {
-            P11PROV_debug("cmp_public_key_values: EC key MISMATCHED");
+            /* Fallback: compare curve NID when EC_POINT not available
+             * This handles HSMs that don't expose CKA_EC_POINT on private keys */
+            P11PROV_debug("cmp_public_key_values: EC_POINT not available, trying curve NID fallback");
+            ret = cmp_attr(pub_key1, pub_key2, CKA_P11PROV_CURVE_NID);
+            if (ret == RET_OSSL_OK) {
+                P11PROV_debug("cmp_public_key_values: EC key MATCHED (via curve NID fallback)");
+            } else {
+                P11PROV_debug("cmp_public_key_values: EC key MISMATCHED");
+            }
         }
         break;
     case CKK_ML_DSA:
@@ -739,6 +747,7 @@ static int match_key_with_cert(P11PROV_OBJ *priv_key, P11PROV_OBJ *pub_key)
     CK_ATTRIBUTE *x;
     int num = 0;
     int ret = RET_OSSL_ERR;
+    bool curve_nid_fallback = false;
 
     cert = p11prov_obj_find_associated(priv_key, CKO_CERTIFICATE);
     if (!cert) {
@@ -756,6 +765,7 @@ static int match_key_with_cert(P11PROV_OBJ *priv_key, P11PROV_OBJ *pub_key)
     case CKK_EC:
     case CKK_EC_EDWARDS:
     case CKK_EC_EDWARDS_LEGACY:
+        /* Try EC_POINT comparison first */
         attrs[0].type = CKA_P11PROV_PUB_KEY;
         num = 1;
         break;
@@ -781,9 +791,46 @@ static int match_key_with_cert(P11PROV_OBJ *priv_key, P11PROV_OBJ *pub_key)
         x = p11prov_obj_get_attr(pub_key, attrs[i].type);
         if (!x || x->ulValueLen != attrs[i].ulValueLen
             || memcmp(x->pValue, attrs[i].pValue, x->ulValueLen) != 0) {
+            /* For EC keys, check if we should fall back to curve NID comparison */
+            if ((pub_key->data.key.type == CKK_EC ||
+                 pub_key->data.key.type == CKK_EC_EDWARDS ||
+                 pub_key->data.key.type == CKK_EC_EDWARDS_LEGACY) && !x) {
+                P11PROV_debug("match_key_with_cert: EC_POINT not available on priv_key, will try curve NID fallback");
+                curve_nid_fallback = true;
+            } else {
+                ret = RET_OSSL_ERR;
+                goto done;
+            }
+        }
+    }
+
+    /* If EC_POINT comparison failed due to missing attribute, try curve NID */
+    if (curve_nid_fallback) {
+        CK_ATTRIBUTE curve_nid_attrs[1] = { 0 };
+        CK_ATTRIBUTE *curve_nid_x;
+        int curve_nid_num = 1;
+
+        curve_nid_attrs[0].type = CKA_P11PROV_CURVE_NID;
+        ret = get_attrs_from_cert(cert, curve_nid_attrs, curve_nid_num);
+        if (ret != CKR_OK) {
+            P11PROV_debug("match_key_with_cert: failed to get curve NID from cert");
             ret = RET_OSSL_ERR;
             goto done;
         }
+
+        curve_nid_x = p11prov_obj_get_attr(pub_key, CKA_P11PROV_CURVE_NID);
+        if (!curve_nid_x || curve_nid_x->ulValueLen != curve_nid_attrs[0].ulValueLen
+            || memcmp(curve_nid_x->pValue, curve_nid_attrs[0].pValue, curve_nid_x->ulValueLen) != 0) {
+            P11PROV_debug("match_key_with_cert: curve NID mismatch");
+            OPENSSL_free(curve_nid_attrs[0].pValue);
+            ret = RET_OSSL_ERR;
+            goto done;
+        }
+
+        OPENSSL_free(curve_nid_attrs[0].pValue);
+        P11PROV_debug("match_key_with_cert: EC key MATCHED via curve NID fallback");
+        ret = RET_OSSL_OK;
+        goto done;
     }
 
     ret = RET_OSSL_OK;
