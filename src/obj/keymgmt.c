@@ -707,17 +707,18 @@ static int cmp_public_key_values(P11PROV_OBJ *pub_key1, P11PROV_OBJ *pub_key2)
         ret = cmp_attr(pub_key1, pub_key2, CKA_P11PROV_PUB_KEY);
         if (ret == RET_OSSL_OK) {
             P11PROV_debug("cmp_public_key_values: EC key MATCHED (via EC_POINT)");
-        } else {
-            /* Fallback: compare curve NID when EC_POINT not available
-             * This handles HSMs that don't expose CKA_EC_POINT on private keys */
-            P11PROV_debug("cmp_public_key_values: EC_POINT not available, trying curve NID fallback");
-            ret = cmp_attr(pub_key1, pub_key2, CKA_P11PROV_CURVE_NID);
-            if (ret == RET_OSSL_OK) {
-                P11PROV_debug("cmp_public_key_values: EC key MATCHED (via curve NID fallback)");
-            } else {
-                P11PROV_debug("cmp_public_key_values: EC key MISMATCHED");
-            }
-        }
+        } 
+        // else {
+        //     /* Fallback: compare curve NID when EC_POINT not available
+        //      * This handles HSMs that don't expose CKA_EC_POINT on private keys */
+        //     P11PROV_debug("cmp_public_key_values: EC_POINT not available, trying curve NID fallback");
+        //     ret = cmp_attr(pub_key1, pub_key2, CKA_P11PROV_CURVE_NID);
+        //     if (ret == RET_OSSL_OK) {
+        //         P11PROV_debug("cmp_public_key_values: EC key MATCHED (via curve NID fallback)");
+        //     } else {
+        //         P11PROV_debug("cmp_public_key_values: EC key MISMATCHED");
+        //     }
+        // }
         break;
     case CKK_ML_DSA:
     case CKK_ML_KEM:
