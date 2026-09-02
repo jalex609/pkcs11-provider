@@ -604,68 +604,123 @@ P11PROV_OBJ *p11prov_obj_find_associated(P11PROV_OBJ *obj,
     P11PROV_OBJ *retobj = NULL;
     CK_RV ret, fret;
 
-    P11PROV_debug("Find associated object");
+    P11PROV_debug("Find associated object (class=%u)", class);
 
     /* check if we have one already */
-    retobj = p11prov_obj_get_associated(obj);
+   retobj = p11prov_obj_get_associated(obj);
     if (retobj) {
         if (p11prov_obj_get_class(retobj) == class) {
             /* BINGO */
+            P11PROV_debug("Found associated object in cache");
             return p11prov_obj_ref_no_cache(retobj);
         } else {
             retobj = NULL;
         }
     }
 
+    /* Try CKA_ID first */
     id = p11prov_obj_get_attr(obj, CKA_ID);
-    if (!id || id->ulValueLen == 0) {
+    if (id && id->ulValueLen > 0) {
+        P11PROV_debug("Searching by CKA_ID (len=%lu)", id->ulValueLen);
+
+        CKATTR_ASSIGN(template[0], CKA_CLASS, &class, sizeof(class));
+        template[1] = *id;
+
+        ret = p11prov_try_session_ref(obj, CK_UNAVAILABLE_INFORMATION, false, false,
+                                      &session);
+        if (ret != CKR_OK) {
+            goto done;
+        }
+
+        sess = p11prov_session_handle(session);
+
+        ret = p11prov_FindObjectsInit(obj->ctx, sess, template, 2);
+        if (ret != CKR_OK) {
+            goto done;
+        }
+
+        /* we expect a single entry */
+        ret = p11prov_FindObjects(obj->ctx, sess, &handle, 1, &objcount);
+
+        fret = p11prov_FindObjectsFinal(obj->ctx, sess);
+        if (fret != CKR_OK) {
+            /* this is not fatal */
+            P11PROV_raise(obj->ctx, fret, "Failed to terminate object search");
+        }
+
+        if (ret == CKR_OK && objcount == 1) {
+            P11PROV_debug("Found associated object by CKA_ID");
+            ret = p11prov_obj_from_handle(obj->ctx, session, handle, &retobj);
+            if (ret != CKR_OK) {
+                P11PROV_raise(obj->ctx, ret, "Failed to get object from handle");
+            }
+
+            /* associate it so we do not have to search again on repeat calls */
+            if (retobj && obj->assoc_obj == NULL) {
+                obj->assoc_obj = p11prov_obj_ref_no_cache(retobj);
+            }
+            goto done;
+        }
+
+        P11PROV_debug("CKA_ID lookup found %lu objects (expected 1), trying CKA_LABEL", objcount);
+        p11prov_return_session(session);
+        session = NULL;
+    } else {
+        P11PROV_debug("No CKA_ID found, trying CKA_LABEL");
+    }
+
+    /* Fall back to CKA_LABEL if CKA_ID didn't work */
+    CK_ATTRIBUTE *label = p11prov_obj_get_attr(obj, CKA_LABEL);
+    if (label && label->ulValueLen > 0) {
+        P11PROV_debug("Searching by CKA_LABEL (len=%lu, value='%.*s')",
+                      label->ulValueLen, (int)label->ulValueLen, (char*)label->pValue);
+
+        CKATTR_ASSIGN(template[0], CKA_CLASS, &class, sizeof(class));
+        template[1] = *label;
+
+        ret = p11prov_try_session_ref(obj, CK_UNAVAILABLE_INFORMATION, false, false,
+                                      &session);
+        if (ret != CKR_OK) {
+            goto done;
+        }
+
+        sess = p11prov_session_handle(session);
+
+        ret = p11prov_FindObjectsInit(obj->ctx, sess, template, 2);
+        if (ret != CKR_OK) {
+            goto done;
+        }
+
+        /* we expect a single entry */
+        ret = p11prov_FindObjects(obj->ctx, sess, &handle, 1, &objcount);
+
+        fret = p11prov_FindObjectsFinal(obj->ctx, sess);
+        if (fret != CKR_OK) {
+            /* this is not fatal */
+            P11PROV_raise(obj->ctx, fret, "Failed to terminate object search");
+        }
+
+        if (ret == CKR_OK && objcount == 1) {
+            P11PROV_debug("Found associated object by CKA_LABEL");
+            ret = p11prov_obj_from_handle(obj->ctx, session, handle, &retobj);
+            if (ret != CKR_OK) {
+                P11PROV_raise(obj->ctx, ret, "Failed to get object from handle");
+            }
+
+            /* associate it so we do not have to search again on repeat calls */
+            if (retobj && obj->assoc_obj == NULL) {
+                obj->assoc_obj = p11prov_obj_ref_no_cache(retobj);
+            }
+            goto done;
+        }
+
+        P11PROV_debug("CKA_LABEL lookup found %lu objects (expected 1)", objcount);
+        p11prov_return_session(session);
+        session = NULL;
+    } else {
+        P11PROV_debug("No CKA_LABEL found");
         P11PROV_raise(obj->ctx, CKR_GENERAL_ERROR,
-                      "No CKA_ID in source object");
-        goto done;
-    }
-
-    CKATTR_ASSIGN(template[0], CKA_CLASS, &class, sizeof(class));
-    template[1] = *id;
-
-    ret = p11prov_try_session_ref(obj, CK_UNAVAILABLE_INFORMATION, false, false,
-                                  &session);
-    if (ret != CKR_OK) {
-        goto done;
-    }
-
-    sess = p11prov_session_handle(session);
-
-    ret = p11prov_FindObjectsInit(obj->ctx, sess, template, 2);
-    if (ret != CKR_OK) {
-        goto done;
-    }
-
-    /* we expect a single entry */
-    ret = p11prov_FindObjects(obj->ctx, sess, &handle, 1, &objcount);
-
-    fret = p11prov_FindObjectsFinal(obj->ctx, sess);
-    if (fret != CKR_OK) {
-        /* this is not fatal */
-        P11PROV_raise(obj->ctx, fret, "Failed to terminate object search");
-    }
-
-    if (ret != CKR_OK) {
-        goto done;
-    }
-    if (objcount != 1) {
-        P11PROV_raise(obj->ctx, ret, "Error in C_FindObjects (count=%ld)",
-                      objcount);
-        goto done;
-    }
-
-    ret = p11prov_obj_from_handle(obj->ctx, session, handle, &retobj);
-    if (ret != CKR_OK) {
-        P11PROV_raise(obj->ctx, ret, "Failed to get object from handle");
-    }
-
-    /* associate it so we do not have to search again on repeat calls */
-    if (retobj && obj->assoc_obj == NULL) {
-        obj->assoc_obj = p11prov_obj_ref_no_cache(retobj);
+                      "No CKA_ID or CKA_LABEL in source object");
     }
 
 done:

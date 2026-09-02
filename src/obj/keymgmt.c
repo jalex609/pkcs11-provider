@@ -1022,6 +1022,35 @@ static int match_public_keys(P11PROV_OBJ *key1, P11PROV_OBJ *key2)
                   key_type_name(key2->data.key.type), key2->data.key.type,
                   key2->handle, key2->slotid);
 
+    /* Log CKA_ID and CKA_LABEL for debugging key matching issues */
+    CK_ATTRIBUTE *id1 = p11prov_obj_get_attr(key1, CKA_ID);
+    CK_ATTRIBUTE *label1 = p11prov_obj_get_attr(key1, CKA_LABEL);
+    CK_ATTRIBUTE *id2 = p11prov_obj_get_attr(key2, CKA_ID);
+    CK_ATTRIBUTE *label2 = p11prov_obj_get_attr(key2, CKA_LABEL);
+
+    if (id1 && id1->ulValueLen > 0) {
+        debug_hex_dump("match_public_keys: key1 CKA_ID", id1->pValue, id1->ulValueLen);
+    } else {
+        P11PROV_debug("match_public_keys: key1 CKA_ID: (none)");
+    }
+    if (label1 && label1->ulValueLen > 0) {
+        P11PROV_debug("match_public_keys: key1 CKA_LABEL: '%.*s' (len=%lu)",
+                      (int)label1->ulValueLen, (char*)label1->pValue, label1->ulValueLen);
+    } else {
+        P11PROV_debug("match_public_keys: key1 CKA_LABEL: (none)");
+    }
+    if (id2 && id2->ulValueLen > 0) {
+        debug_hex_dump("match_public_keys: key2 CKA_ID", id2->pValue, id2->ulValueLen);
+    } else {
+        P11PROV_debug("match_public_keys: key2 CKA_ID: (none)");
+    }
+    if (label2 && label2->ulValueLen > 0) {
+        P11PROV_debug("match_public_keys: key2 CKA_LABEL: '%.*s' (len=%lu)",
+                      (int)label2->ulValueLen, (char*)label2->pValue, label2->ulValueLen);
+    } else {
+        P11PROV_debug("match_public_keys: key2 CKA_LABEL: (none)");
+    }
+
     /* avoid round-trip to HSM if keys have enough
      * attributes to do the logical comparison
      * CKK_RSA: MODULUS / PUBLIC_EXPONENT
