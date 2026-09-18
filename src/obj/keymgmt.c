@@ -470,6 +470,10 @@ CK_RV p11prov_obj_set_ec_encoded_public_key(P11PROV_OBJ *key,
     int len;
 
     if (key->handle != CK_P11PROV_IMPORTED_HANDLE) {
+        /*
+         * not a mock object, cannot set public key to a token object backed by
+         * an actual handle.
+         */
         /* not matching, error out */
         P11PROV_raise(key->ctx, CKR_KEY_INDIGESTIBLE,
                       "Cannot change public key of a token object");
@@ -649,23 +653,27 @@ static int cmp_public_key_values(P11PROV_OBJ *pub_key1, P11PROV_OBJ *pub_key2)
     case CKK_EC_EDWARDS:
     case CKK_EC_EDWARDS_LEGACY:
     case CKK_EC_MONTGOMERY: {
-        CK_ATTRIBUTE *x1 = NULL;
-        CK_ATTRIBUTE *x2 = NULL;
+        ret = cmp_attr(pub_key1, pub_key2, CKA_P11PROV_PUB_KEY);
+        // CK_ATTRIBUTE *x1 = NULL;
+        // CK_ATTRIBUTE *x2 = NULL;
 
-        /* Fast path: compare cached EC_POINT values directly */
-        x1 = p11prov_obj_get_attr(pub_key1, CKA_P11PROV_PUB_KEY);
-        x2 = p11prov_obj_get_attr(pub_key2, CKA_P11PROV_PUB_KEY);
+        // /* Fast path: compare cached EC_POINT values directly */
+        // x1 = p11prov_obj_get_attr(pub_key1, CKA_P11PROV_PUB_KEY);
+        // x2 = p11prov_obj_get_attr(pub_key2, CKA_P11PROV_PUB_KEY);
 
-        if (x1 && x2) {
-            if (x1->ulValueLen == x2->ulValueLen
-                && memcmp(x1->pValue, x2->pValue, x1->ulValueLen) == 0) {
-                P11PROV_debug("cmp_public_key_values: EC key MATCHED (via cached EC_POINT)");
-                ret = RET_OSSL_OK;
-            } else {
-                P11PROV_debug("cmp_public_key_values: EC_POINT mismatch");
-                ret = RET_OSSL_ERR;
-            }
-        }
+        // if (x1 && x2) {
+        //     if (x1->ulValueLen == x2->ulValueLen
+        //         && memcmp(x1->pValue, x2->pValue, x1->ulValueLen) == 0) {
+        //         P11PROV_debug("cmp_public_key_values: EC key MATCHED (via cached EC_POINT)");
+        //         ret = RET_OSSL_OK;
+        //     } else {
+        //         P11PROV_debug("cmp_public_key_values: EC_POINT mismatch");
+        //         ret = RET_OSSL_ERR;
+        //     }
+        // } else {
+        //     // 
+        //     ret = cmp_attr(pub_key1, pub_key2, CKA_P11PROV_PUB_KEY);
+        // }
         break;
     }
     case CKK_ML_DSA:
