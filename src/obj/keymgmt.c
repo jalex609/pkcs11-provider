@@ -408,6 +408,53 @@ CK_ATTRIBUTE *p11prov_obj_get_ec_public_raw(P11PROV_OBJ *key)
     return pub_key;
 }
 
+/* Cache the encoded public key directly on a private key object.
+ * This allows key matching without needing CKA_EC_POINT on the HSM token.
+ * Only works for imported (in-memory) keys - token keys cannot be modified. */
+CK_RV set_private_key_cached_pub_key(P11PROV_OBJ *key,
+                                            const void *pubkey, size_t pubkey_len)
+{
+    CK_ATTRIBUTE *existing;
+    CK_ATTRIBUTE *new_pub_attr;
+    void *ptr;
+
+    if (key->class != CKO_PRIVATE_KEY) {
+        return CKR_KEY_INDIGESTIBLE;
+    }
+
+    existing = p11prov_obj_get_attr(key, CKA_P11PROV_PUB_KEY);
+    if (!existing) {
+        /* Need to allocate space for one more attribute */
+        ptr = OPENSSL_realloc(key->attrs,
+                              sizeof(CK_ATTRIBUTE) * (key->numattrs + 1));
+        if (!ptr) {
+            P11PROV_raise(key->ctx, CKR_HOST_MEMORY,
+                          "Failed to allocate memory for cached pub key");
+            return CKR_HOST_MEMORY;
+        }
+        key->attrs = ptr;
+        new_pub_attr = &key->attrs[key->numattrs];
+        key->numattrs += 1;
+        memset(new_pub_attr, 0, sizeof(CK_ATTRIBUTE));
+    } else {
+        /* Replace existing cached value */
+        OPENSSL_free(existing->pValue);
+        new_pub_attr = existing;
+        memset(new_pub_attr, 0, sizeof(CK_ATTRIBUTE));
+    }
+
+    new_pub_attr->type = CKA_P11PROV_PUB_KEY;
+    new_pub_attr->pValue = OPENSSL_malloc(pubkey_len);
+    if (!new_pub_attr->pValue) {
+        P11PROV_raise(key->ctx, CKR_HOST_MEMORY, "Failed to copy pub key");
+        return CKR_HOST_MEMORY;
+    }
+    memcpy(new_pub_attr->pValue, pubkey, pubkey_len);
+    new_pub_attr->ulValueLen = (CK_ULONG)pubkey_len;
+
+    return CKR_OK;
+}
+
 CK_RV p11prov_obj_set_ec_encoded_public_key(P11PROV_OBJ *key,
                                             const void *pubkey,
                                             size_t pubkey_len)

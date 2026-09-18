@@ -518,6 +518,27 @@ static int p11prov_ec_get_params(void *keydata, OSSL_PARAM params[])
             return ret;
         }
     }
+    p = OSSL_PARAM_locate(params, OSSL_PKEY_PARAM_PUB_KEY);
+    if (p) {
+        CK_ATTRIBUTE *pub_key;
+
+        if (p->data_type != OSSL_PARAM_OCTET_STRING) {
+            return RET_OSSL_ERR;
+        }
+
+        pub_key = p11prov_obj_get_ec_public_raw(key);
+        if (!pub_key) {
+            return RET_OSSL_ERR;
+        }
+
+        p->return_size = pub_key->ulValueLen;
+        if (p->data) {
+            if (p->data_size < pub_key->ulValueLen) {
+                return RET_OSSL_ERR;
+            }
+            memcpy(p->data, pub_key->pValue, pub_key->ulValueLen);
+        }
+    }
 
     return p11prov_kmgmt_get_params(keydata, params);
 }
@@ -533,6 +554,7 @@ static const OSSL_PARAM *p11prov_ec_gettable_params(void *provctx)
         OSSL_PARAM_BN(OSSL_PKEY_PARAM_EC_PUB_X, NULL, 0),
         OSSL_PARAM_BN(OSSL_PKEY_PARAM_EC_PUB_Y, NULL, 0),
         OSSL_PARAM_octet_string(OSSL_PKEY_PARAM_ENCODED_PUBLIC_KEY, NULL, 0),
+        OSSL_PARAM_octet_string(OSSL_PKEY_PARAM_PUB_KEY, NULL, 0),
         OSSL_PARAM_utf8_string(OSSL_PKEY_PARAM_EC_POINT_CONVERSION_FORMAT, NULL,
                                0),
         /*
@@ -572,16 +594,25 @@ static int p11prov_ec_set_params(void *keydata, const OSSL_PARAM params[])
         if (p->data_type != OSSL_PARAM_OCTET_STRING) {
             return RET_OSSL_ERR;
         }
-        if (p11prov_obj_set_ec_encoded_public_key(key, p->data, p->data_size)
-            != CKR_OK) {
-            return RET_OSSL_ERR;
+        if (p11prov_obj_get_class(key) == CKO_PRIVATE_KEY) {
+            /* For private keys, cache the public key in memory for key matching.
+             * This enables CMS signing when the HSM private key lacks CKA_EC_POINT. */
+            if (set_private_key_cached_pub_key(key, p->data, p->data_size)
+                != CKR_OK) {
+                return RET_OSSL_ERR;
+            }
+        } else {
+            if (p11prov_obj_set_ec_encoded_public_key(key, p->data, p->data_size)
+                != CKR_OK) {
+                return RET_OSSL_ERR;
+            }
+            /* Hack to make OpenSSL happy in the TLS code path.
+             * When OpenSSL creates ECX keys it ends up never giving us a chance
+             * to mark the key as public because there are no parameters to set or
+             * anything else. Fix it here. Note that setting the class only works
+             * on mock objects so we never risk overriding a proper object */
+            p11prov_obj_set_class(key, CKO_PUBLIC_KEY);
         }
-        /* Hack to make OpenSSL happy in the TLS code path.
-         * When OpenSSL creates ECX keys it ends up never giving us a chance
-         * to mark the key as public because there are no parameters to set or
-         * anything else. Fix it here. Note that setting the class only works
-         * on mock objects so we never risk overriding a proper object */
-        p11prov_obj_set_class(key, CKO_PUBLIC_KEY);
     }
 
     return RET_OSSL_OK;

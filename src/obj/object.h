@@ -98,6 +98,8 @@ P11PROV_OBJ *p11prov_obj_import_secret_key(P11PROV_CTX *ctx, CK_KEY_TYPE type,
 CK_RV p11prov_obj_set_ec_encoded_public_key(P11PROV_OBJ *key,
                                             const void *pubkey,
                                             size_t pubkey_len);
+CK_RV set_private_key_cached_pub_key(P11PROV_OBJ *key,
+                                     const void *pubkey, size_t pubkey_len);
 CK_RV p11prov_pkeyinfo_to_pubkey(CK_ATTRIBUTE *pkeyinfo, CK_ATTRIBUTE *attr);
 
 CK_RV p11prov_obj_copy_key_data(P11PROV_OBJ *dst, P11PROV_OBJ *src);
