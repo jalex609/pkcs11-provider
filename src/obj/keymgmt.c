@@ -2,7 +2,6 @@
    SPDX-License-Identifier: Apache-2.0 */
 
 #include "obj/internal.h"
-#include <openssl/bio.h>
 
 bool p11prov_obj_is_rsa_pss(P11PROV_OBJ *obj)
 {
@@ -652,10 +651,9 @@ static int cmp_public_key_values(P11PROV_OBJ *pub_key1, P11PROV_OBJ *pub_key2)
     case CKK_EC:
     case CKK_EC_EDWARDS:
     case CKK_EC_EDWARDS_LEGACY:
-    case CKK_EC_MONTGOMERY: {
+    case CKK_EC_MONTGOMERY:
         ret = cmp_attr(pub_key1, pub_key2, CKA_P11PROV_PUB_KEY);
         break;
-    }
     case CKK_ML_DSA:
     case CKK_ML_KEM:
         ret = cmp_attr(pub_key1, pub_key2, CKA_VALUE);
