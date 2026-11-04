@@ -64,6 +64,7 @@ CK_RV p11prov_match_curve(CK_KEY_TYPE type, CK_ATTRIBUTE *attr,
                           const char **curve_name, int *curve_nid,
                           CK_ULONG *key_bit_size, CK_ULONG *key_size);
 bool is_edwards_ec_params(CK_ATTRIBUTE *attr);
+bool is_edwards_type(CK_KEY_TYPE type);
 bool is_ed448_ec_params(CK_ATTRIBUTE *attr);
 bool is_ed25519_ec_params(CK_ATTRIBUTE *attr);
 
