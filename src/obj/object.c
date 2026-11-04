@@ -378,7 +378,17 @@ void *p11prov_obj_from_typed_reference(const void *reference,
         CK_KEY_TYPE type = CK_UNAVAILABLE_INFORMATION;
 
         type = p11prov_obj_get_key_type(key);
-        if (type == key_type) {
+        /* Edwards keys may carry either the PKCS#11 v3.0 CKK_EC_EDWARDS
+         * type or the legacy vendor marker CKK_EC_EDWARDS_LEGACY
+         * (depending on whether the token reports the key type correctly
+         * or the provider retyped a mislabeled CKK_EC key). They are the
+         * same algorithm, so accept either flavor regardless of which
+         * one the caller requested. */
+        if (type == key_type
+            || ((key_type == CKK_EC_EDWARDS
+                 || key_type == CKK_EC_EDWARDS_LEGACY)
+                && (type == CKK_EC_EDWARDS
+                    || type == CKK_EC_EDWARDS_LEGACY))) {
             /* add ref count */
             key = p11prov_obj_ref_no_cache(key);
         } else {

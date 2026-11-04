@@ -752,11 +752,14 @@ int p11prov_obj_key_cmp(P11PROV_OBJ *key1, P11PROV_OBJ *key2, CK_KEY_TYPE type,
         return RET_OSSL_ERR;
     }
 
-    if (type != CK_UNAVAILABLE_INFORMATION && type != key1->data.key.type) {
+    if (type != CK_UNAVAILABLE_INFORMATION && type != key1->data.key.type
+        && !(is_edwards_type(type) && is_edwards_type(key1->data.key.type))) {
         return RET_OSSL_ERR;
     }
 
-    if (key1->data.key.type != key2->data.key.type) {
+    if (key1->data.key.type != key2->data.key.type
+        && !(is_edwards_type(key1->data.key.type)
+             && is_edwards_type(key2->data.key.type))) {
         return RET_OSSL_ERR;
     }
 
@@ -1025,12 +1028,14 @@ CK_RV p11prov_match_curve(CK_KEY_TYPE type, CK_ATTRIBUTE *attr,
 
 bool is_edwards_ec_params(CK_ATTRIBUTE *attr)
 {
-    return
-        (attr->ulValueLen == sizeof(ed25519_oid) &&
-         memcmp(attr->pValue, ed25519_oid, sizeof(ed25519_oid)) == 0) ||
+    int nid;
+    return p11prov_match_curve(CKK_EC_EDWARDS, attr, NULL, &nid,
+                               NULL, NULL) == CKR_OK;
+}
 
-        (attr->ulValueLen == sizeof(ed448_oid) &&
-         memcmp(attr->pValue, ed448_oid, sizeof(ed448_oid)) == 0);
+bool is_edwards_type(CK_KEY_TYPE type)
+{
+    return type == CKK_EC_EDWARDS || type == CKK_EC_EDWARDS_LEGACY;
 }
 
 bool is_ed448_ec_params(CK_ATTRIBUTE *attr) {
