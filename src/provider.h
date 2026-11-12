@@ -265,6 +265,7 @@ typedef struct p11prov_obj_pool P11PROV_OBJ_POOL;
 #endif
 
 /* Provider ctx */
+void p11prov_ctx_stale_detected(P11PROV_CTX *ctx);
 P11PROV_INTERFACE *p11prov_ctx_get_interface(P11PROV_CTX *ctx);
 CK_UTF8CHAR_PTR p11prov_ctx_pin(P11PROV_CTX *ctx);
 OSSL_LIB_CTX *p11prov_ctx_get_libctx(P11PROV_CTX *ctx);
