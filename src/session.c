@@ -234,6 +234,60 @@ void p11prov_session_pool_fork_reset(P11PROV_SESSION_POOL *pool)
     }
 }
 
+/* Similar to p11prov_session_pool_fork_reset(), but no mutexes are
+ * reinitialized. */
+void p11prov_session_pool_stale_reset(P11PROV_SESSION_POOL *pool)
+{
+    P11PROV_debug("Stale-resetting sessions in pool %p", pool);
+
+    if (!pool) {
+        return;
+    }
+
+    if (MUTEX_LOCK(pool) == CKR_OK) {
+        /* LOCKED SECTION ------------- */
+        for (CK_ULONG i = 0; i < pool->num_sessions; i++) {
+            P11PROV_SESSION *session = pool->sessions[i];
+            CK_RV ret;
+
+            /* same lock order as fetch_session (pool then session), so
+             * no deadlock; in_use is set under the session mutex */
+            ret = MUTEX_LOCK(session);
+            if (ret != CKR_OK) {
+                /* can't lock: mark broken anyways */
+                P11PROV_debug("Session %p can't be locked, marking broken",
+                              session);
+                p11prov_session_mark_broken(session);
+                continue;
+            }
+            /* LOCKED SESSION ------- */
+            if (session->in_use || session->refcnt != 0) {
+                /* can lock, but in use: mark broken so it is recycled
+                 * (handle closed) once it is released */
+                P11PROV_debug("Session %p in flight, marking broken",
+                              session);
+                p11prov_session_mark_broken(session);
+                (void)MUTEX_UNLOCK(session);
+                /* ------- LOCKED SESSION */
+                continue;
+            }
+
+            session->session = CK_INVALID_HANDLE;
+            session->flags = DEFLT_SESSION_FLAGS;
+            session->state = CK_UNAVAILABLE_INFORMATION;
+            session->is_login = false;
+            session->cb = NULL;
+            session->cbarg = NULL;
+            (void)MUTEX_UNLOCK(session);
+            /* ------- LOCKED SESSION */
+        }
+        (void)MUTEX_UNLOCK(pool);
+        /* ------------- LOCKED SECTION */
+    } else {
+        P11PROV_debug("Failed to stale-reset sessions in pool");
+    }
+}
+
 static CK_RV session_new_bare(P11PROV_SESSION_POOL *pool,
                               P11PROV_SESSION **_session)
 {
@@ -338,6 +392,13 @@ static CK_RV session_check(P11PROV_SESSION *session, CK_FLAGS flags)
     P11PROV_debug("Checking session %lu", session->session);
     ret = p11prov_GetSessionInfo(session->provctx, session->session,
                                  &session_info);
+    if (ret == CKR_SESSION_HANDLE_INVALID) {
+        /* The session was disturbed by an outside process.
+         * Need to re-init and reevaluate cached handles */
+        P11PROV_debug("Stale module detected (session %lu handle invalid), arming re-init",
+                      session->session);
+        p11prov_ctx_stale_detected(session->provctx);
+    }
     if (ret == CKR_OK) {
         session->state = session_info.state;
         if (flags == (session_info.flags & flags)) {
@@ -904,6 +965,11 @@ static CK_RV slot_login(P11PROV_SLOT *slot, P11PROV_URI *uri,
 
     /* we acquired the session, check that it is ok */
     ret = session_check(session, session->flags);
+    if (ret == CKR_SESSION_HANDLE_INVALID) {
+        /* The session is already marked for reinitialization, 
+         * remap to session_closed to open a fresh session */
+        ret = CKR_SESSION_CLOSED;
+    }
     if (ret != CKR_OK && ret != CKR_SESSION_CLOSED) {
         goto done;
     }
@@ -1091,7 +1157,7 @@ CK_RV p11prov_get_session(P11PROV_CTX *provctx, CK_SLOT_ID *slotid,
     ret = fetch_session(pool, flags, false, &session);
     if (ret == CKR_OK) {
         ret = session_check(session, flags);
-        if (ret == CKR_SESSION_CLOSED) {
+        if (ret == CKR_SESSION_CLOSED || ret == CKR_SESSION_HANDLE_INVALID) {
             /* this is ok */
             ret = CKR_OK;
         }
