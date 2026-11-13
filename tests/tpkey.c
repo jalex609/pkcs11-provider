@@ -398,6 +398,126 @@ static void check_peer_ec_key_copy(void)
     EVP_PKEY_free(key);
 }
 
+/* OpenSSL's CMS path attaches the signer certificate's public key
+ * to the private key EVP via EVP_PKEY_set1_encoded_public_key(). For token
+ * backed private keys the provider must cache the encoded public key in
+ * memory instead of failing with "Cannot change public key of a token
+ * object", so that CMS signing works when the HSM private key lacks
+ * CKA_EC_POINT. */
+static void check_set_encoded_public_key_private(void)
+{
+    EVP_PKEY *key;
+    EVP_PKEY *cert_pub_key;
+    unsigned char *encoded = NULL;
+    size_t encoded_len = 0;
+    int ret;
+
+    key = util_gen_key("P-256", "Pkey set encoded pub key Test");
+
+    /* Take the public key of a certificate (here: the key's own
+     * public part) and attach its encoded form to the private key EVP. */
+    cert_pub_key = EVP_PKEY_dup(key);
+    if (!cert_pub_key) {
+        PRINTERROSSL("Failed to duplicate key for cert public key\n");
+        exit(EXIT_FAILURE);
+    }
+
+    ret = EVP_PKEY_get1_encoded_public_key(cert_pub_key, &encoded);
+    encoded_len = (encoded != NULL) ? ret : 0;
+    if (ret == 0 || encoded == NULL || encoded_len == 0) {
+        PRINTERROSSL("Failed to get encoded public key\n");
+        exit(EXIT_FAILURE);
+    }
+
+    ret = EVP_PKEY_set1_encoded_public_key(key, encoded, encoded_len);
+    if (ret != 1) {
+        PRINTERROSSL("Failed to set encoded public key on token private key\n");
+        ossl_err_print();
+        OPENSSL_free(encoded);
+        exit(EXIT_FAILURE);
+    }
+    OPENSSL_free(encoded);
+
+    /* The cached value must be readable back */
+    encoded = NULL;
+    ret = EVP_PKEY_get1_encoded_public_key(key, &encoded);
+    encoded_len = (encoded != NULL) ? ret : 0;
+    if (ret == 0 || encoded == NULL || encoded_len == 0) {
+        PRINTERROSSL("Failed to read back encoded public key\n");
+        exit(EXIT_FAILURE);
+    }
+    /* Uncompressed P-256 point is 0x04 | 32 | 32; some tokens hand back a
+     * compressed point (0x02/0x03 | 32). Both are valid encodings. */
+    if ((encoded_len != 65 && encoded_len != 33)
+        || (encoded[0] != 0x04 && encoded[0] != 0x02 && encoded[0] != 0x03)) {
+        PRINTERROSSL("Unexpected encoded public key (len %zu, tag 0x%02x)\n",
+                     encoded_len, encoded[0]);
+        exit(EXIT_FAILURE);
+    }
+    OPENSSL_free(encoded);
+
+    EVP_PKEY_free(cert_pub_key);
+    EVP_PKEY_free(key);
+}
+
+/* After caching the encoded public key on a private key EVP, key
+ * matching must still succeed: the cached value feeds the
+ * CKA_P11PROV_PUB_KEY comparison in cmp_public_key_values(). Loading the
+ * same token key again through the store produces a separate provider
+ * object, so EVP_PKEY_eq() between the cached private key and the fresh
+ * copy forces a full match instead of the same-handle shortcircuit. */
+static void check_cached_pub_key_matching(void)
+{
+    EVP_PKEY *key;
+    EVP_PKEY *pub;
+    unsigned char *encoded = NULL;
+    size_t encoded_len = 0;
+    char *uri;
+    int ret;
+
+    key = util_gen_key("P-256", "Pkey cached pub key match Test");
+
+    ret = EVP_PKEY_get1_encoded_public_key(key, &encoded);
+    encoded_len = (encoded != NULL) ? ret : 0;
+    if (ret == 0 || encoded == NULL || encoded_len == 0) {
+        PRINTERROSSL("Failed to get encoded public key\n");
+        exit(EXIT_FAILURE);
+    }
+
+    ret = EVP_PKEY_set1_encoded_public_key(key, encoded, encoded_len);
+    if (ret != 1) {
+        PRINTERROSSL("Failed to cache encoded public key\n");
+        ossl_err_print();
+        exit(EXIT_FAILURE);
+    }
+    OPENSSL_free(encoded);
+
+    /* A separate load of the same token object (public part) must match the
+     * private key whose public part was cached in memory. */
+    ret = asprintf(&uri, "pkcs11:object=%s;type=public",
+                   "Pkey cached pub key match Test");
+    if (ret == -1) {
+        PRINTERROSSL("Failed to allocate uri\n");
+        exit(EXIT_FAILURE);
+    }
+    pub = load_key_ex(uri, "provider=pkcs11");
+    free(uri);
+    if (!pub) {
+        PRINTERROSSL("Failed to load peer public key\n");
+        exit(EXIT_FAILURE);
+    }
+
+    ret = EVP_PKEY_eq(key, pub);
+    if (ret != 1) {
+        PRINTERROSSL("Key match failed after caching public key\n");
+        ossl_err_print();
+        exit(EXIT_FAILURE);
+    }
+
+    EVP_PKEY_free(pub);
+    EVP_PKEY_free(key);
+}
+
 int main(int argc, char *argv[])
 {
     const char *driver = NULL;
@@ -491,6 +611,10 @@ int main(int argc, char *argv[])
 
     /* This test is EC specific */
     check_peer_ec_key_copy();
+
+    /* Cached encoded public key on token private keys */
+    check_set_encoded_public_key_private();
+    check_cached_pub_key_matching();
 
     PRINTERR("ALL A-OK!\n");
     exit(EXIT_SUCCESS);
