@@ -408,31 +408,6 @@ CK_ATTRIBUTE *p11prov_obj_get_ec_public_raw(P11PROV_OBJ *key)
     return pub_key;
 }
 
-/* Cache the encoded public key directly on a private key object.
- * This allows key matching without needing CKA_EC_POINT on the HSM token. */
-CK_RV p11prov_obj_set_cached_pub_key(P11PROV_OBJ *key,
-                                     const void *pubkey, size_t pubkey_len)
-{
-    CK_ATTRIBUTE attr = { 0 };
-    CK_RV rv;
-
-    if (key->class != CKO_PRIVATE_KEY) {
-        return CKR_KEY_INDIGESTIBLE;
-    }
-
-    attr.type = CKA_P11PROV_PUB_KEY;
-    attr.pValue = OPENSSL_memdup(pubkey, pubkey_len);
-    if (!attr.pValue) {
-        return CKR_HOST_MEMORY;
-    }
-    attr.ulValueLen = (CK_ULONG)pubkey_len;
-    rv = p11prov_obj_add_attr(key, &attr);
-    if (rv != CKR_OK) {
-        OPENSSL_free(attr.pValue);
-    }
-    return rv;
-}
-
 CK_RV p11prov_obj_set_ec_encoded_public_key(P11PROV_OBJ *key,
                                             const void *pubkey,
                                             size_t pubkey_len)
@@ -447,6 +422,10 @@ CK_RV p11prov_obj_set_ec_encoded_public_key(P11PROV_OBJ *key,
     int len;
 
     if (key->handle != CK_P11PROV_IMPORTED_HANDLE) {
+        /*
+         * not a mock object, cannot set public key to a token object backed by
+         * an actual handle.
+         */
         /* not matching, error out */
         P11PROV_raise(key->ctx, CKR_KEY_INDIGESTIBLE,
                       "Cannot change public key of a token object");
