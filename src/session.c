@@ -248,38 +248,18 @@ void p11prov_session_pool_stale_reset(P11PROV_SESSION_POOL *pool)
         /* LOCKED SECTION ------------- */
         for (CK_ULONG i = 0; i < pool->num_sessions; i++) {
             P11PROV_SESSION *session = pool->sessions[i];
-            CK_RV ret;
 
             /* same lock order as fetch_session (pool then session), so
              * no deadlock; in_use is set under the session mutex */
-            ret = MUTEX_LOCK(session);
-            if (ret != CKR_OK) {
-                /* can't lock: mark broken anyways */
+            if (MUTEX_LOCK(session) == CKR_OK) {
                 P11PROV_debug("Session %p can't be locked, marking broken",
                               session);
                 p11prov_session_mark_broken(session);
-                continue;
-            }
-            /* LOCKED SESSION ------- */
-            if (session->in_use || session->refcnt != 0) {
-                /* can lock, but in use: mark broken so it is recycled
-                 * (handle closed) once it is released */
-                P11PROV_debug("Session %p in flight, marking broken",
-                              session);
-                p11prov_session_mark_broken(session);
                 (void)MUTEX_UNLOCK(session);
-                /* ------- LOCKED SESSION */
-                continue;
+            } else {
+                /* can't lock: mark broken anyways */
+                p11prov_session_mark_broken(session);
             }
-
-            session->session = CK_INVALID_HANDLE;
-            session->flags = DEFLT_SESSION_FLAGS;
-            session->state = CK_UNAVAILABLE_INFORMATION;
-            session->is_login = false;
-            session->cb = NULL;
-            session->cbarg = NULL;
-            (void)MUTEX_UNLOCK(session);
-            /* ------- LOCKED SESSION */
         }
         (void)MUTEX_UNLOCK(pool);
         /* ------------- LOCKED SECTION */
