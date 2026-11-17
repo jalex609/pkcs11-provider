@@ -339,6 +339,37 @@ void p11prov_slot_fork_reset(P11PROV_SLOTS_CTX *sctx)
     }
 }
 
+/* Similar to p11prov_slot_fork_reset(): but does not re-init
+ * the mutex. Called when the module needs to be reinitialized 
+ * due to an invalidated session */
+void p11prov_slot_stale_reset(P11PROV_SLOTS_CTX *sctx)
+{
+    int err;
+
+    err = pthread_rwlock_wrlock(&sctx->rwlock);
+    if (err != 0) {
+        err = errno;
+        P11PROV_debug("Failed to get slots lock (errno:%d)", err);
+        return;
+    }
+
+    for (int i = 0; i < sctx->num; i++) {
+        P11PROV_SLOT *slot = sctx->slots[i];
+
+        /* invalidate all sessions, mark in-flight ones broken */
+        p11prov_session_pool_stale_reset(slot->pool);
+
+        /* mark each object for revalidation */
+        p11prov_obj_pool_fork_reset(slot->objects);
+    }
+
+    err = pthread_rwlock_unlock(&sctx->rwlock);
+    if (err != 0) {
+        err = errno;
+        P11PROV_debug("Failed to release slots lock (errno:%d)", err);
+    }
+}
+
 void p11prov_free_slots(P11PROV_SLOTS_CTX *sctx)
 {
     int err;

@@ -25,6 +25,8 @@ struct p11prov_module_ctx {
     pthread_mutex_t lock;
     bool initialized;
     bool reinit;
+    /* forces a full Finalize+Initialize */
+    bool reinit_full;
 };
 
 /* This structure is effectively equivalent to CK_FUNCTION_LIST_3_0
@@ -407,10 +409,17 @@ void p11prov_module_free(P11PROV_MODULE *mctx)
     OPENSSL_free(mctx);
 }
 
-/* should only be called by the fork handler */
+/* Mark the module as needing re-initialization */
 void p11prov_module_mark_reinit(P11PROV_MODULE *mctx)
 {
     mctx->reinit = true;
+}
+
+/* Mark the module as needing a full re-initialization for fork handler */
+void p11prov_module_mark_reinit_full(P11PROV_MODULE *mctx)
+{
+    mctx->reinit = true;
+    mctx->reinit_full = true;
 }
 
 CK_RV p11prov_module_reinit(P11PROV_MODULE *mctx)
@@ -436,26 +445,41 @@ CK_RV p11prov_module_reinit(P11PROV_MODULE *mctx)
 
     P11PROV_debug("PKCS#11: Re-initializing the module: %s", mctx->path);
 
-    (void)p11prov_Finalize(mctx->provctx, NULL);
+    if (mctx->reinit_full) {
+        /* Fork recovery: the child inherits a snapshot of the parent's
+         * module state, which always needs to be fully re-initialized */
+        mctx->reinit_full = false;
+        args.flags = CKF_OS_LOCKING_OK;
+        args.pReserved = (void *)mctx->init_args;
+        ret = p11prov_Initialize(mctx->provctx, &args);
+    } else {
+        /* check if the module is still alive. If something else already
+         * reinitialized, do not finalize */
+        ret = p11prov_GetInfo(mctx->provctx, &ck_info);
+        if (ret != CKR_OK) {
+            args.flags = CKF_OS_LOCKING_OK;
+            args.pReserved = (void *)mctx->init_args;
+            ret = p11prov_Initialize(mctx->provctx, &args);
+        } else {
+            P11PROV_debug("PKCS#11: Module still alive, skipping Finalize/Initialize");
+        }
+    }
 
-    args.flags = CKF_OS_LOCKING_OK;
-    args.pReserved = (void *)mctx->init_args;
-    ret = p11prov_Initialize(mctx->provctx, &args);
     if (ret == CKR_CRYPTOKI_ALREADY_INITIALIZED) {
         ret = CKR_OK;
     }
-    if (ret != CKR_OK) {
-        P11PROV_debug("PKCS#11: Re-init failed: %lx", ret);
-        goto done;
+    if (ret == CKR_OK) {
+        /* fetch the module info to verify the identity after re-init */
+        ret = p11prov_GetInfo(mctx->provctx, &ck_info);
     }
 
     /* clear reinit flag as we just did re-initialize */
     mctx->reinit = false;
 
-    ret = p11prov_GetInfo(mctx->provctx, &ck_info);
     if (ret != CKR_OK) {
         goto done;
     }
+
     trim(ck_info.manufacturerID);
     trim(ck_info.libraryDescription);
 

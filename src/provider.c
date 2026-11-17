@@ -4,6 +4,8 @@
 
 #include "provider.h"
 #include "decoder.h"
+#include "interface.h"
+#include "slot.h"
 #include <pthread.h>
 #include <string.h>
 
@@ -136,9 +138,10 @@ static void fork_child(void)
 
     for (int i = 0; i < ctx_pool.num; i++) {
         if (ctx_pool.contexts[i]->status == P11PROV_INITIALIZED) {
-            /* can't re-init in the fork handler, mark it */
+            /* can't re-init in the fork handler, mark it with
+             * reinit_full so that it unconditionally resets */
             ctx_pool.contexts[i]->status = P11PROV_NEEDS_REINIT;
-            p11prov_module_mark_reinit(ctx_pool.contexts[i]->module);
+            p11prov_module_mark_reinit_full(ctx_pool.contexts[i]->module);
             p11prov_slot_fork_reset(ctx_pool.contexts[i]->slots);
         }
     }
@@ -199,6 +202,37 @@ done:
     /* ------------------------------------------------- WRLOCKED */
     (void)pthread_rwlock_unlock(&ctx_pool.rwlock);
     return;
+}
+
+/*
+ * Mark for reset when we detect that the session is invalid. This will cause
+ * the next call to p11prov_ctx_status() to reinitialize everything and
+ * refetch any currently held object handles
+ *
+ * NOTE: Slot invalidation is deferred to the NEEDS_REINIT case of 
+ * p11prov_ctx_status(), which runs before any slots lock is taken.
+ */
+void p11prov_ctx_stale_detected(P11PROV_CTX *ctx)
+{
+    int err;
+
+    err = pthread_rwlock_wrlock(&ctx_pool.rwlock);
+    if (err != 0) {
+        err = errno;
+        P11PROV_debug("Failed to get ctx pool lock (errno:%d)", err);
+        return;
+    }
+
+    if (ctx->status == P11PROV_INITIALIZED) {
+        ctx->status = P11PROV_NEEDS_REINIT;
+        p11prov_module_mark_reinit(ctx->module);
+    }
+
+    err = pthread_rwlock_unlock(&ctx_pool.rwlock);
+    if (err != 0) {
+        err = errno;
+        P11PROV_debug("Failed to release ctx pool lock (errno:%d)", err);
+    }
 }
 
 static void context_rm_pool(struct p11prov_ctx *ctx)
@@ -521,6 +555,8 @@ CK_RV p11prov_ctx_status(P11PROV_CTX *ctx)
             ctx->status = P11PROV_IN_ERROR;
             break;
         }
+        /* invalidate all cached sessions and mark pooled objects for re-fetch */
+        p11prov_slot_stale_reset(ctx->slots);
         ctx->status = P11PROV_INITIALIZED;
         break;
     case P11PROV_IN_ERROR:
