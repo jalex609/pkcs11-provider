@@ -2,6 +2,7 @@
    SPDX-License-Identifier: Apache-2.0 */
 
 #include "provider.h"
+#include "platform/endian.h"
 #include "kmgmt/internal.h"
 #include "openssl/rand.h"
 
@@ -225,8 +226,8 @@ int p11prov_kmgmt_gen(struct key_generator *ctx, CK_ATTRIBUTE *pubkey_template,
     }
 
     ret = p11prov_get_session(ctx->provctx, &slotid, NULL, ctx->uri,
-                              ctx->mechanism.mechanism, NULL, NULL, true, true,
-                              &session);
+                              ctx->mechanism.mechanism, NULL, NULL,
+                              LOGIN_REQUIRED, true, &session);
     if (ret != CKR_OK) {
         return ret;
     }
@@ -341,6 +342,82 @@ int p11prov_kmgmt_get_params(void *keydata, OSSL_PARAM params[])
     return RET_OSSL_OK;
 }
 
+CK_RV p11prov_kmgmt_param_data_to_attr(
+    CK_ATTRIBUTE attrs[static MAX_FIND_ATTRS_SIZE], int *numattrs,
+    CK_ATTRIBUTE_TYPE type, const uint8_t *data, size_t size, bool byteswap)
+{
+    CK_ATTRIBUTE *dst;
+    CK_ATTRIBUTE tmp;
+    CK_RV rv;
+
+    if (*numattrs >= MAX_FIND_ATTRS_SIZE) {
+        return CKR_GENERAL_ERROR;
+    }
+    dst = &attrs[*numattrs];
+
+    tmp.type = type;
+    tmp.pValue = (void *)data;
+    tmp.ulValueLen = size;
+    rv = p11prov_copy_attr(dst, &tmp);
+    if (rv == CKR_OK) {
+        if (byteswap) {
+            byteswap_buf(dst->pValue, dst->pValue, dst->ulValueLen);
+        }
+        (*numattrs)++;
+    }
+    return rv;
+}
+
+CK_RV p11prov_kmgmt_params_to_attr(
+    P11PROV_CTX *ctx, CK_ATTRIBUTE attrs[static MAX_FIND_ATTRS_SIZE],
+    int *numattrs, const OSSL_PARAM params[], const char *name,
+    CK_ATTRIBUTE_TYPE type, bool byteswap)
+{
+    const OSSL_PARAM *p;
+    CK_RV rv;
+
+    p = OSSL_PARAM_locate_const(params, name);
+    if (p) {
+        rv = p11prov_kmgmt_param_data_to_attr(attrs, numattrs, type, p->data,
+                                              p->data_size, byteswap);
+        if (rv != CKR_OK) {
+            P11PROV_raise(ctx, rv, "param_data_to_attr failed for %s", name);
+        }
+    } else {
+        rv = CKR_KEY_INDIGESTIBLE;
+        P11PROV_raise(ctx, rv, "Missing param: %s", name);
+    }
+
+    return rv;
+}
+
+CK_RV p11prov_kmgmt_privkey_to_id(
+    P11PROV_CTX *ctx, CK_ATTRIBUTE attrs[static MAX_FIND_ATTRS_SIZE],
+    int *numattrs, const uint8_t *data0, size_t len0, const uint8_t *data1,
+    size_t len1, const uint8_t *data2, size_t len2)
+{
+    data_buffer data[5] = {
+        { .data = (uint8_t *)"PrivKey", .length = 7 },
+        { .data = (uint8_t *)data0, .length = len0 },
+        { .data = (uint8_t *)data1, .length = len1 },
+        { .data = (uint8_t *)data2, .length = len2 },
+        { .data = NULL, .length = 0 },
+    };
+    uint8_t digest_buf[SHA256_DIGEST_LENGTH];
+    data_buffer digest = {
+        .data = digest_buf,
+        .length = sizeof(digest_buf),
+    };
+    CK_RV rv;
+
+    rv = p11prov_digest_util(ctx, "sha256", NULL, data, &digest);
+    if (rv == CKR_OK) {
+        rv = p11prov_kmgmt_param_data_to_attr(
+            attrs, numattrs, CKA_ID, digest.data, digest.length, false);
+    }
+    return rv;
+}
+
 void p11prov_kmgmt_gen_cleanup(struct key_generator *ctx)
 {
     P11PROV_debug("kmgmt gen_cleanup %p", ctx);
@@ -402,6 +479,60 @@ int p11prov_kmgmt_has(const void *keydata, int selection)
      * if asked for an export (main reason to do this), or other operations */
 
     return RET_OSSL_OK;
+}
+
+struct kmgmt_dup_import {
+    void *key;
+    int selection;
+    OSSL_FUNC_keymgmt_import_fn *import_fn;
+};
+
+static int kmgmt_dup_import_cb(const OSSL_PARAM params[], void *arg)
+{
+    struct kmgmt_dup_import *dup = (struct kmgmt_dup_import *)arg;
+
+    /* key types without parameters export nothing, the new key is it */
+    if (params == NULL || params[0].key == NULL) {
+        return RET_OSSL_OK;
+    }
+
+    return dup->import_fn(dup->key, dup->selection, params);
+}
+
+void *p11prov_kmgmt_dup(const void *keydata, int selection,
+                        OSSL_FUNC_keymgmt_new_fn *new_fn,
+                        OSSL_FUNC_keymgmt_import_fn *import_fn)
+{
+    P11PROV_OBJ *key = (P11PROV_OBJ *)keydata;
+    CK_OBJECT_CLASS class = p11prov_obj_get_class(key);
+    struct kmgmt_dup_import dup = {
+        .selection = selection,
+        .import_fn = import_fn,
+    };
+
+    P11PROV_debug("key %p dup (selection: %d)", key, selection);
+
+    /* Key objects are not modified once they reference a key on the token,
+     * so a full copy can share the object. */
+    if ((class == CKO_PRIVATE_KEY
+         && (selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY))
+        || (class == CKO_PUBLIC_KEY
+            && (selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY))) {
+        return p11prov_obj_ref(key);
+    }
+
+    /* A copy of less than the key (EVP_PKEY_copy_parameters() for instance)
+     * must not carry the private key along. */
+    dup.key = new_fn(p11prov_obj_get_prov_ctx(key));
+    if (dup.key == NULL) {
+        return NULL;
+    }
+    if (p11prov_kmgmt_export(key, selection, kmgmt_dup_import_cb, &dup)
+        != RET_OSSL_OK) {
+        p11prov_kmgmt_free(dup.key);
+        return NULL;
+    }
+    return dup.key;
 }
 
 int p11prov_kmgmt_import(CK_KEY_TYPE type, CK_ULONG param_set,
@@ -503,4 +634,108 @@ int p11prov_kmgmt_export(void *keydata, int selection, OSSL_CALLBACK *cb_fn,
 
     /* nothing to export, just return OK */
     return RET_OSSL_OK;
+}
+
+enum p11prov_kmgmt_algorithms {
+    P11PROV_KMGMT_RSA = 0,
+    P11PROV_KMGMT_RSAPSS,
+    P11PROV_KMGMT_EC,
+    P11PROV_KMGMT_HKDF,
+    P11PROV_KMGMT_ED25519,
+    P11PROV_KMGMT_ED448,
+    P11PROV_KMGMT_X25519,
+    P11PROV_KMGMT_X448,
+    P11PROV_KMGMT_MLDSA_44,
+    P11PROV_KMGMT_MLDSA_65,
+    P11PROV_KMGMT_MLDSA_87,
+    P11PROV_KMGMT_ML_KEM_512,
+    P11PROV_KMGMT_ML_KEM_768,
+    P11PROV_KMGMT_ML_KEM_1024,
+    P11PROV_KMGMT_SLHDSA_SHA2_128S,
+    P11PROV_KMGMT_SLHDSA_SHA2_128F,
+    P11PROV_KMGMT_SLHDSA_SHA2_192S,
+    P11PROV_KMGMT_SLHDSA_SHA2_192F,
+    P11PROV_KMGMT_SLHDSA_SHA2_256S,
+    P11PROV_KMGMT_SLHDSA_SHA2_256F,
+    P11PROV_KMGMT_SLHDSA_SHAKE_128S,
+    P11PROV_KMGMT_SLHDSA_SHAKE_128F,
+    P11PROV_KMGMT_SLHDSA_SHAKE_192S,
+    P11PROV_KMGMT_SLHDSA_SHAKE_192F,
+    P11PROV_KMGMT_SLHDSA_SHAKE_256S,
+    P11PROV_KMGMT_SLHDSA_SHAKE_256F,
+    P11PROV_KMGMT_NUM_ALGS
+};
+
+const OSSL_ALGORITHM kmgmt_algorithms[P11PROV_KMGMT_NUM_ALGS] = {
+    [P11PROV_KMGMT_RSA] = DEFAULT_ALGORITHM(RSA, p11prov_rsa_keymgmt_functions),
+    [P11PROV_KMGMT_RSAPSS] =
+        DEFAULT_ALGORITHM(RSAPSS, p11prov_rsapss_keymgmt_functions),
+    [P11PROV_KMGMT_EC] = DEFAULT_ALGORITHM(EC, p11prov_ec_keymgmt_functions),
+    [P11PROV_KMGMT_HKDF] =
+        DEFAULT_ALGORITHM(HKDF, p11prov_hkdf_keymgmt_functions),
+    [P11PROV_KMGMT_ED25519] =
+        DEFAULT_ALGORITHM(ED25519, p11prov_ed25519_keymgmt_functions),
+    [P11PROV_KMGMT_ED448] =
+        DEFAULT_ALGORITHM(ED448, p11prov_ed448_keymgmt_functions),
+    [P11PROV_KMGMT_X25519] =
+        DEFAULT_ALGORITHM(X25519, p11prov_x25519_keymgmt_functions),
+    [P11PROV_KMGMT_X448] =
+        DEFAULT_ALGORITHM(X448, p11prov_x448_keymgmt_functions),
+    [P11PROV_KMGMT_MLDSA_44] =
+        DEFAULT_ALGORITHM(MLDSA_44, p11prov_mldsa44_keymgmt_functions),
+    [P11PROV_KMGMT_MLDSA_65] =
+        DEFAULT_ALGORITHM(MLDSA_65, p11prov_mldsa65_keymgmt_functions),
+    [P11PROV_KMGMT_MLDSA_87] =
+        DEFAULT_ALGORITHM(MLDSA_87, p11prov_mldsa87_keymgmt_functions),
+    [P11PROV_KMGMT_ML_KEM_512] =
+        DEFAULT_ALGORITHM(ML_KEM_512, p11prov_mlkem512_keymgmt_functions),
+    [P11PROV_KMGMT_ML_KEM_768] =
+        DEFAULT_ALGORITHM(ML_KEM_768, p11prov_mlkem768_keymgmt_functions),
+    [P11PROV_KMGMT_ML_KEM_1024] =
+        DEFAULT_ALGORITHM(ML_KEM_1024, p11prov_mlkem1024_keymgmt_functions),
+    [P11PROV_KMGMT_SLHDSA_SHA2_128S] = DEFAULT_ALGORITHM(
+        SLHDSA_SHA2_128S, p11prov_slhdsa_sha2_128s_keymgmt_functions),
+    [P11PROV_KMGMT_SLHDSA_SHA2_128F] = DEFAULT_ALGORITHM(
+        SLHDSA_SHA2_128F, p11prov_slhdsa_sha2_128f_keymgmt_functions),
+    [P11PROV_KMGMT_SLHDSA_SHA2_192S] = DEFAULT_ALGORITHM(
+        SLHDSA_SHA2_192S, p11prov_slhdsa_sha2_192s_keymgmt_functions),
+    [P11PROV_KMGMT_SLHDSA_SHA2_192F] = DEFAULT_ALGORITHM(
+        SLHDSA_SHA2_192F, p11prov_slhdsa_sha2_192f_keymgmt_functions),
+    [P11PROV_KMGMT_SLHDSA_SHA2_256S] = DEFAULT_ALGORITHM(
+        SLHDSA_SHA2_256S, p11prov_slhdsa_sha2_256s_keymgmt_functions),
+    [P11PROV_KMGMT_SLHDSA_SHA2_256F] = DEFAULT_ALGORITHM(
+        SLHDSA_SHA2_256F, p11prov_slhdsa_sha2_256f_keymgmt_functions),
+    [P11PROV_KMGMT_SLHDSA_SHAKE_128S] = DEFAULT_ALGORITHM(
+        SLHDSA_SHAKE_128S, p11prov_slhdsa_shake_128s_keymgmt_functions),
+    [P11PROV_KMGMT_SLHDSA_SHAKE_128F] = DEFAULT_ALGORITHM(
+        SLHDSA_SHAKE_128F, p11prov_slhdsa_shake_128f_keymgmt_functions),
+    [P11PROV_KMGMT_SLHDSA_SHAKE_192S] = DEFAULT_ALGORITHM(
+        SLHDSA_SHAKE_192S, p11prov_slhdsa_shake_192s_keymgmt_functions),
+    [P11PROV_KMGMT_SLHDSA_SHAKE_192F] = DEFAULT_ALGORITHM(
+        SLHDSA_SHAKE_192F, p11prov_slhdsa_shake_192f_keymgmt_functions),
+    [P11PROV_KMGMT_SLHDSA_SHAKE_256S] = DEFAULT_ALGORITHM(
+        SLHDSA_SHAKE_256S, p11prov_slhdsa_shake_256s_keymgmt_functions),
+    [P11PROV_KMGMT_SLHDSA_SHAKE_256F] = DEFAULT_ALGORITHM(
+        SLHDSA_SHAKE_256F, p11prov_slhdsa_shake_256f_keymgmt_functions),
+};
+
+CK_RV p11prov_register_kmgmt(P11PROV_CTX *ctx, bool fips_property)
+{
+    const char *property = NULL;
+    OSSL_ALGORITHM *algs =
+        OPENSSL_zalloc(sizeof(OSSL_ALGORITHM) * (P11PROV_KMGMT_NUM_ALGS + 1));
+
+    if (algs == NULL) {
+        return CKR_HOST_MEMORY;
+    }
+
+    if (fips_property) {
+        property = P11PROV_FIPS_PROPERTIES;
+    }
+
+    for (int i = 0; i < P11PROV_KMGMT_NUM_ALGS; i++) {
+        p11prov_assign_alg(&algs[i], kmgmt_algorithms, i, property);
+    }
+
+    return p11prov_ctx_add_algs(ctx, OSSL_OP_KEYMGMT, algs);
 }

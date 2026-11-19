@@ -4,6 +4,10 @@
 #ifndef _UTIL_H
 #define _UTIL_H
 
+#if defined(_WIN32)
+#include <pthread.h>
+#endif
+
 #define CKATTR_ASSIGN(x, _a, _b, _c) \
     do { \
         x.type = (_a); \
@@ -57,7 +61,7 @@ P11PROV_URI *p11prov_parse_uri(P11PROV_CTX *ctx, const char *uri);
 char *p11prov_obj_to_uri(P11PROV_OBJ *key);
 void p11prov_uri_free(P11PROV_URI *parsed_uri);
 CK_OBJECT_CLASS p11prov_uri_get_class(P11PROV_URI *uri);
-void p11prov_uri_set_class(P11PROV_URI *uri, CK_OBJECT_CLASS class);
+CK_RV p11prov_uri_set_class(P11PROV_URI *uri, CK_OBJECT_CLASS class);
 CK_ATTRIBUTE p11prov_uri_get_id(P11PROV_URI *uri);
 CK_RV p11prov_uri_set_id(P11PROV_URI *uri, CK_ATTRIBUTE *id);
 CK_ATTRIBUTE p11prov_uri_get_label(P11PROV_URI *uri);
@@ -65,14 +69,16 @@ CK_RV p11prov_uri_set_label(P11PROV_URI *uri, CK_ATTRIBUTE *label);
 char *p11prov_uri_get_serial(P11PROV_URI *uri);
 char *p11prov_uri_get_pin(P11PROV_URI *uri);
 CK_SLOT_ID p11prov_uri_get_slot_id(P11PROV_URI *uri);
-void p11prov_uri_set_slot_id(P11PROV_URI *uri, CK_SLOT_ID slot_id);
+CK_RV p11prov_uri_set_slot_id(P11PROV_URI *uri, CK_SLOT_ID slot_id);
 P11PROV_URI *p11prov_copy_uri(P11PROV_URI *uri);
 CK_RV p11prov_uri_match_token(P11PROV_URI *uri, CK_SLOT_ID slot_id,
                               CK_SLOT_INFO *slot, CK_TOKEN_INFO *token);
+CK_RV p11prov_uri_match_module(P11PROV_URI *uri, CK_INFO *info);
 int p11prov_get_pin(P11PROV_CTX *ctx, const char *in, char **out);
 bool cyclewait_with_timeout(uint64_t max_wait, uint64_t interval,
                             uint64_t *start_time);
 CK_RV p11prov_copy_attr(CK_ATTRIBUTE *dst, CK_ATTRIBUTE *src);
+CK_RV p11prov_bn_param_to_attr(const OSSL_PARAM *p, CK_ATTRIBUTE *attr);
 CK_RV p11prov_bn_to_attr(CK_ATTRIBUTE *dst, BIGNUM *bn);
 bool p11prov_x509_names_are_equal(CK_ATTRIBUTE *a, CK_ATTRIBUTE *b);
 char *p11prov_alloc_sprintf(int size_hint, const char *format, ...);

@@ -30,6 +30,7 @@ endif
 test_env = environment({
   'TEST_PATH': meson.current_source_dir(),
   'TESTBLDDIR': meson.current_build_dir(),
+  'LIBSPATH': meson.project_build_root() / 'src',
 })
 
 if get_option('enable_explicit_EC_test')
@@ -96,6 +97,7 @@ endif
 
 test_programs = {
   'tsession': ['tsession.c'],
+  'tsigbuf': ['tsigbuf.c', 'util.c'],
   'tgenkey': ['tgenkey.c', 'util.c'],
   'tlsctx': ['tlsctx.c', 'util.c'],
   'tlssetkey': ['tlssetkey.c', 'util.c'],
@@ -103,15 +105,23 @@ test_programs = {
   'tdigest_dupctx': ['tdigest_dupctx.c'],
   'treadkeys': ['treadkeys.c'],
   'tcmpkeys': ['tcmpkeys.c', 'util.c'],
+  'tdupkey': ['tdupkey.c', 'util.c'],
+  'tecpubparams': ['tecpubparams.c', 'util.c'],
   'tcachekeys': ['tcachekeys.c', 'util.c'],
   'tfork': ['tfork.c', 'util.c'],
+  'tforkslot': ['tforkslot.c', 'util.c'],
   'tstorepubkey': ['tstorepubkey.c', 'util.c'],
+  'tstorepubkeyfree': ['tstorepubkeyfree.c', 'util.c'],
   'tpkey': ['tpkey.c', 'util.c'],
   'pincache': ['pincache.c'],
   'ccerts': ['ccerts.c', 'util.c'],
   'tecx': ['tecx.c', 'util.c'],
   'tskey-kdf': ['tskey_kdf.c', 'util.c'],
   'taead': ['taead.c', 'util.c'],
+  'tsshkdf': ['tsshkdf.c', 'util.c'],
+  'thkdfextract': ['thkdfextract.c', 'util.c'],
+  'loadprov': ['loadprov.c', 'util.c'],
+  'trsaraw': ['trsaraw.c', 'util.c'],
 }
 
 test_executables = []
@@ -123,8 +133,33 @@ foreach t, sources : test_programs
   test_executables += [t]
 endforeach
 
+ec_point_test = executable(
+  'tecpoint',
+  ['tecpoint.c', '../src/obj/ec_point.c'],
+  build_by_default: false,
+  include_directories: [configinc, include_directories('../src')],
+  dependencies: [libcrypto],
+)
+uri_parse_test = executable(
+  'turi_parse',
+  ['turi_parse.c'],
+  objects: pkcs11_provider.extract_all_objects(),
+  include_directories: [configinc, include_directories('../src')],
+  dependencies: [libcrypto, dl_dep, pthread_dep],
+)
+
 setup_script=find_program('setup.sh')
 all_suites=['softokn', 'softhsm', 'kryoptic', 'kryoptic.nss']
+test(
+  'ec-point-decode',
+  ec_point_test,
+  suite: ['unittests'] + all_suites,
+)
+test(
+  'uri-parse',
+  uri_parse_test,
+  suite: ['unittests'] + all_suites,
+)
 foreach suite : all_suites + ['kryoptic.multislot']
   test(
     'setup',
@@ -141,6 +176,7 @@ tests = {
   'basic': {'suites': all_suites},
   'mlkem': {'suites': ['kryoptic']},
   'mldsa': {'suites': ['kryoptic']},
+  'slhdsa': {'suites': ['kryoptic']},
   'pubkey': {'suites': all_suites},
   'certs': {'suites': all_suites},
   'ecc': {'suites': all_suites},
@@ -151,9 +187,12 @@ tests = {
   'fork': {'suites': all_suites},
   'oaepsha2': {'suites': ['softokn', 'kryoptic', 'kryoptic.nss']},
   'hkdf': {'suites': ['softokn', 'kryoptic', 'kryoptic.nss']},
+  'hkdfextract': {'suites': ['softokn', 'kryoptic', 'kryoptic.nss']},
+  'sshkdf': {'suites': all_suites},
   'imported' : {'suites': ['softokn', 'kryoptic', 'kryoptic.nss']},
   'pem_encoder': {'suites': all_suites},
   'rsa': {'suites': all_suites},
+  'rsaraw': {'suites': ['softokn']},
   'rsapss': {'suites': all_suites},
   'rsapssam': {'suites': ['softhsm', 'kryoptic']},
   'genkey': {'suites': all_suites},
@@ -161,6 +200,7 @@ tests = {
   'pkey': {'suites': all_suites},
   'pkey_provider': {'suites': ['kryoptic', 'kryoptic.nss', 'softokn']},
   'session': {'suites': all_suites},
+  'sigbuf': {'suites': ['softokn']},
   'skey': {'suites': ['softokn', 'kryoptic', 'kryoptic.nss'], 'timeout': 90},
   'rand': {'suites': all_suites},
   'readkeys': {'suites': all_suites},
@@ -173,6 +213,7 @@ tests = {
   'aead': {'suites': ['softokn', 'kryoptic', 'kryoptic.nss']},
   'op_state': {'suites': all_suites},
   'defaultslot': {'suites': ['kryoptic.multislot']},
+  'slotpin': {'suites': ['kryoptic.multislot']},
 }
 
 test_wrapper = find_program('test-wrapper')

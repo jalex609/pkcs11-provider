@@ -2,6 +2,8 @@
    SPDX-License-Identifier: Apache-2.0 */
 
 #include "obj/internal.h"
+#include "obj/ec_point.h"
+#include "kmgmt/keymgmt.h"
 
 bool p11prov_obj_is_rsa_pss(P11PROV_OBJ *obj)
 {
@@ -93,6 +95,21 @@ static int prep_get_pub_key(P11PROV_OBJ **obj, CK_KEY_TYPE type)
     /* check if we have a pub key associated to a private key */
     if (key->class == CKO_PRIVATE_KEY) {
         P11PROV_OBJ *pobj = p11prov_obj_get_associated(key);
+        if ((!pobj || pobj->class != CKO_PUBLIC_KEY)
+            && !p11prov_obj_get_attr(key, CKA_P11PROV_PUB_KEY)) {
+            /* Some tokens (e.g. OP-TEE) do not expose the public point on
+             * private keys, so search for the matching public key object.
+             * Associate it explicitly, find_associated() does not replace
+             * an object (e.g. a certificate) that is already associated,
+             * and the key keeps the returned object alive. */
+            pobj = p11prov_obj_find_associated(key, CKO_PUBLIC_KEY);
+            if (pobj) {
+                p11prov_obj_set_associated(key, pobj);
+                /* set_associated() took its own reference, drop the one
+                 * returned by find_associated(), pobj remains valid */
+                p11prov_obj_free(pobj);
+            }
+        }
         if (pobj && pobj->class == CKO_PUBLIC_KEY) {
             /* replace obj with the public one */
             *obj = pobj;
@@ -291,12 +308,10 @@ done:
 }
 
 CK_RV decode_ec_point(P11PROV_CTX *provctx, CK_KEY_TYPE key_type,
-                      CK_ATTRIBUTE *attr, struct data_buffer *ec_point)
+                      CK_ULONG expected_size, CK_ATTRIBUTE *attr,
+                      struct data_buffer *ec_point)
 {
-    ASN1_OCTET_STRING *octet;
-    const unsigned char *val;
-    CK_RV ret = CKR_GENERAL_ERROR;
-    int err;
+    CK_RV ret;
 
     /* Some of the ASN.1 operation may leave errors on the stack
      * which cause TLS operation to fail even if they are benign
@@ -304,54 +319,14 @@ CK_RV decode_ec_point(P11PROV_CTX *provctx, CK_KEY_TYPE key_type,
      * stack if we want to ignore an error */
     p11prov_set_error_mark(provctx);
 
-    /* in d2i functions 'in' is overwritten to return the remainder of
-     * the buffer after parsing, so we always need to avoid passing in
-     * our pointer holders, to avoid having them clobbered */
-    val = attr->pValue;
-    octet = d2i_ASN1_OCTET_STRING(NULL, (const unsigned char **)&val,
-                                  attr->ulValueLen);
-    if (!octet) {
-        /* 3.1 spec says CKA_EC_POINT is not DER encoded for Edwards and
-         * Montgomery curves so do not fail in that case and just take
-         * the value as is */
-        if (key_type == CKK_EC) {
-            ret = CKR_KEY_INDIGESTIBLE;
-            goto done;
-        } else {
-            octet = ASN1_OCTET_STRING_new();
-            if (!octet) {
-                ret = CKR_HOST_MEMORY;
-                goto done;
-            }
-            /* makes a copy of the value */
-            err = ASN1_OCTET_STRING_set(octet, attr->pValue, attr->ulValueLen);
-            if (err != RET_OSSL_OK) {
-                ret = CKR_HOST_MEMORY;
-                goto done;
-            }
-        }
-    }
-
-    ec_point->data =
-        OPENSSL_memdup(ASN1_STRING_get0_data(octet), ASN1_STRING_length(octet));
-    if (!ec_point->data) {
-        ret = CKR_HOST_MEMORY;
-        ec_point->length = 0;
-        goto done;
-    }
-    ec_point->length = ASN1_STRING_length(octet);
-
-    ret = CKR_OK;
-done:
+    ret = p11prov_decode_ec_point_value(key_type, expected_size, attr,
+                                        &ec_point->data, &ec_point->length);
     if (ret == CKR_OK) {
         /* we want to ignore decoding errors in this case */
         p11prov_pop_error_to_mark(provctx);
     } else {
         /* we want to leave errors in this case */
         p11prov_clear_last_error_mark(provctx);
-    }
-    if (octet) {
-        ASN1_OCTET_STRING_free(octet);
     }
     return ret;
 }
@@ -376,8 +351,8 @@ CK_ATTRIBUTE *p11prov_obj_get_ec_public_raw(P11PROV_OBJ *key)
             void *tmp_ptr;
             CK_RV ret;
 
-            ret =
-                decode_ec_point(key->ctx, key->data.key.type, ec_point, &data);
+            ret = decode_ec_point(key->ctx, key->data.key.type,
+                                  key->data.key.size, ec_point, &data);
             if (ret != CKR_OK) {
                 P11PROV_raise(key->ctx, ret, "Failed to decode EC_POINT");
                 return NULL;
@@ -576,8 +551,10 @@ static int cmp_bn_attr(P11PROV_OBJ *key1, P11PROV_OBJ *key2,
         return rc;
     }
 
-    bx1 = BN_native2bn(x1->pValue, x1->ulValueLen, NULL);
-    bx2 = BN_native2bn(x2->pValue, x2->ulValueLen, NULL);
+    /* PKCS#11 values, like modulus and public exponent, are of type "Big
+       integer", unsigned integer most-significant byte first. */
+    bx1 = BN_bin2bn(x1->pValue, x1->ulValueLen, NULL);
+    bx2 = BN_bin2bn(x2->pValue, x2->ulValueLen, NULL);
 
     if (BN_cmp(bx1, bx2) == 0) {
         rc = RET_OSSL_OK;
@@ -630,6 +607,7 @@ static int cmp_public_key_values(P11PROV_OBJ *pub_key1, P11PROV_OBJ *pub_key2)
         break;
     case CKK_ML_DSA:
     case CKK_ML_KEM:
+    case CKK_SLH_DSA:
         ret = cmp_attr(pub_key1, pub_key2, CKA_VALUE);
         break;
     default:
@@ -667,6 +645,7 @@ static int match_key_with_cert(P11PROV_OBJ *priv_key, P11PROV_OBJ *pub_key)
         num = 1;
         break;
     case CKK_ML_DSA:
+    case CKK_SLH_DSA:
         attrs[0].type = CKA_VALUE;
         num = 1;
         break;
@@ -802,6 +781,7 @@ int p11prov_obj_key_cmp(P11PROV_OBJ *key1, P11PROV_OBJ *key2, CK_KEY_TYPE type,
     case CKK_RSA:
     case CKK_ML_DSA:
     case CKK_ML_KEM:
+    case CKK_SLH_DSA:
         break;
 
     case CKK_EC:
@@ -1115,10 +1095,15 @@ P11PROV_OBJ *p11prov_obj_pub_from_priv(P11PROV_OBJ *priv)
     }
 
     key->data.key = priv->data.key;
+    key->get_template = priv->get_template;
+    key->free_template = priv->free_template;
+    key->get_find_attrs = priv->get_find_attrs;
 
     /* make sure key is associated to the private one */
     p11prov_obj_set_associated(priv, key);
     p11prov_obj_set_associated(key, priv);
+    /* priv now holds a reference, drop the one from p11prov_obj_new() */
+    p11prov_obj_free(key);
 
     return key;
 }

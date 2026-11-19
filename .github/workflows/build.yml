@@ -1,4 +1,3 @@
----
 name: Build
 
 on:
@@ -119,6 +118,14 @@ jobs:
             # The Meson in Ubuntu 24 has a bug that it can not correctly detect
             # the clangs, gcovr and crashes. Skip it for now.
             echo "skipcoverage=true" >> $GITHUB_OUTPUT
+          fi
+          if [ "${{ matrix.token }}" = "softokn" ]; then
+            NSSMINVER=`nss-config --version nss | cut -d '.' -f 2`
+            if [ $NSSMINVER -lt 125 ]; then
+              # Some older version of NSS claim ML-KEM support but can't store
+              # ML-KEM keys on the token
+              echo "SUPPRESS_ML_KEM=1" >> $GITHUB_ENV
+            fi
           fi
 
       - name: Checkout Repository
@@ -244,7 +251,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-14]
+        os: [macos-15]
         token: [softokn]
         #, softhsm]
     steps:
@@ -292,7 +299,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
-          name: Test logs on macOS-14 with ${{ matrix.token }}
+          name: Test logs on ${{ matrix.os }} with ${{ matrix.token }}
           path: |
             builddir/meson-logs/*
             builddir/tests/*.log
@@ -305,6 +312,47 @@ jobs:
           retention-days: 1
           name: coverage-${{ matrix.os }}-${{ matrix.token }}
           path: builddir/meson-logs/coverage.info
+
+  build-msys2:
+    name: CI Windows MSYS2
+    runs-on: windows-latest
+
+    # Force all run steps to use the MSYS2 shell
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            git
+            lcov
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-meson
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-dlfcn
+            mingw-w64-ucrt-x86_64-openssl
+
+      - name: Setup
+        run: |
+          git config --global --add safe.directory /__w/pkcs11-provider/pkcs11-provider || true
+          git submodule update --init
+
+          # Using GCC as the compiler for UCRT64
+          CC=gcc meson setup builddir
+
+      - name: Build
+        run: |
+          meson compile -C builddir
 
   setup-openssl:
     name: Build OpenSSL from master branch
@@ -467,6 +515,12 @@ jobs:
           if [ "${{ github.event_name }}" = "pull_request" ]; then
               git fetch origin ${{ github.base_ref }} --depth=1
           fi
+
+      - name: Test the Test Script
+        run: |
+          python3 scripts/coverage/run_tests.py \
+            scripts/coverage_report.sh \
+            scripts/coverage/
 
       - name: Merge coverage reports
         run: |

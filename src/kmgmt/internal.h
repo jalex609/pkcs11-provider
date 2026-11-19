@@ -1,6 +1,19 @@
 /* Copyright (C) 2022-2025 Simo Sorce <simo@redhat.com>
    SPDX-License-Identifier: Apache-2.0 */
 
+#include "kmgmt/keymgmt.h"
+
+/* In older versions of OpenSSL the headers do not define these parameters */
+#ifndef OSSL_PKEY_PARAM_SLH_DSA_SEED
+#define OSSL_PKEY_PARAM_SLH_DSA_SEED "seed"
+#endif
+#ifndef OSSL_PKEY_PARAM_ML_DSA_SEED
+#define OSSL_PKEY_PARAM_ML_DSA_SEED "seed"
+#endif
+#ifndef OSSL_PKEY_PARAM_ML_KEM_SEED
+#define OSSL_PKEY_PARAM_ML_KEM_SEED "seed"
+#endif
+
 struct key_generator {
     P11PROV_CTX *provctx;
 
@@ -30,6 +43,9 @@ struct key_generator {
         struct {
             CK_ML_KEM_PARAMETER_SET_TYPE param_set;
         } mlkem;
+        struct {
+            CK_SLH_DSA_PARAMETER_SET_TYPE param_set;
+        } slhdsa;
     } data;
 
     OSSL_CALLBACK *cb_fn;
@@ -56,6 +72,17 @@ int p11prov_kmgmt_gen(struct key_generator *ctx, CK_ATTRIBUTE *pubkey_template,
 int p11prov_kmgmt_match(const void *keydata1, const void *keydata2,
                         CK_KEY_TYPE type, int selection);
 int p11prov_kmgmt_get_params(void *keydata, OSSL_PARAM params[]);
+CK_RV p11prov_kmgmt_param_data_to_attr(
+    CK_ATTRIBUTE attrs[static MAX_FIND_ATTRS_SIZE], int *numattrs,
+    CK_ATTRIBUTE_TYPE type, const uint8_t *data, size_t size, bool byteswap);
+CK_RV p11prov_kmgmt_params_to_attr(
+    P11PROV_CTX *ctx, CK_ATTRIBUTE attrs[static MAX_FIND_ATTRS_SIZE],
+    int *numattrs, const OSSL_PARAM params[], const char *name,
+    CK_ATTRIBUTE_TYPE type, bool byteswap);
+CK_RV p11prov_kmgmt_privkey_to_id(
+    P11PROV_CTX *ctx, CK_ATTRIBUTE attrs[static MAX_FIND_ATTRS_SIZE],
+    int *numattrs, const uint8_t *data0, size_t len0, const uint8_t *data1,
+    size_t len1, const uint8_t *data2, size_t len2);
 
 void p11prov_kmgmt_gen_cleanup(struct key_generator *ctx);
 
@@ -63,9 +90,51 @@ void *p11prov_kmgmt_new(void *provctx, CK_KEY_TYPE type);
 void p11prov_kmgmt_free(void *key);
 void *p11prov_kmgmt_load(const void *ref, size_t ref_sz, CK_KEY_TYPE type);
 int p11prov_kmgmt_has(const void *keydata, int selection);
+void *p11prov_kmgmt_dup(const void *keydata, int selection,
+                        OSSL_FUNC_keymgmt_new_fn *new_fn,
+                        OSSL_FUNC_keymgmt_import_fn *import_fn);
 
 int p11prov_kmgmt_import(CK_KEY_TYPE type, CK_ULONG param_set,
                          const char *priv_param_name, void *keydata,
                          int selection, const OSSL_PARAM params[]);
 int p11prov_kmgmt_export(void *keydata, int selection, OSSL_CALLBACK *cb_fn,
                          void *cb_arg);
+
+#define DEFINE_KEYMGMT_DUP(type, import_type) \
+    static void *p11prov_##type##_dup(const void *keydata, int selection) \
+    { \
+        return p11prov_kmgmt_dup(keydata, selection, p11prov_##type##_new, \
+                                 p11prov_##import_type##_import); \
+    }
+
+#define DISPATCH_KEYMGMT_FN(type, name) \
+    DECL_DISPATCH_FUNC(keymgmt, p11prov_##type, name)
+#define DISPATCH_KEYMGMT_ELEM(type, NAME, name) \
+    { OSSL_FUNC_KEYMGMT_##NAME, (void (*)(void))p11prov_##type##_##name }
+
+extern const OSSL_DISPATCH p11prov_rsa_keymgmt_functions[];
+extern const OSSL_DISPATCH p11prov_rsapss_keymgmt_functions[];
+extern const OSSL_DISPATCH p11prov_ec_keymgmt_functions[];
+extern const OSSL_DISPATCH p11prov_hkdf_keymgmt_functions[];
+extern const OSSL_DISPATCH p11prov_ed25519_keymgmt_functions[];
+extern const OSSL_DISPATCH p11prov_ed448_keymgmt_functions[];
+extern const OSSL_DISPATCH p11prov_x25519_keymgmt_functions[];
+extern const OSSL_DISPATCH p11prov_x448_keymgmt_functions[];
+extern const OSSL_DISPATCH p11prov_mldsa44_keymgmt_functions[];
+extern const OSSL_DISPATCH p11prov_mldsa65_keymgmt_functions[];
+extern const OSSL_DISPATCH p11prov_mldsa87_keymgmt_functions[];
+extern const OSSL_DISPATCH p11prov_mlkem512_keymgmt_functions[];
+extern const OSSL_DISPATCH p11prov_mlkem768_keymgmt_functions[];
+extern const OSSL_DISPATCH p11prov_mlkem1024_keymgmt_functions[];
+extern const OSSL_DISPATCH p11prov_slhdsa_sha2_128s_keymgmt_functions[];
+extern const OSSL_DISPATCH p11prov_slhdsa_sha2_128f_keymgmt_functions[];
+extern const OSSL_DISPATCH p11prov_slhdsa_sha2_192s_keymgmt_functions[];
+extern const OSSL_DISPATCH p11prov_slhdsa_sha2_192f_keymgmt_functions[];
+extern const OSSL_DISPATCH p11prov_slhdsa_sha2_256s_keymgmt_functions[];
+extern const OSSL_DISPATCH p11prov_slhdsa_sha2_256f_keymgmt_functions[];
+extern const OSSL_DISPATCH p11prov_slhdsa_shake_128s_keymgmt_functions[];
+extern const OSSL_DISPATCH p11prov_slhdsa_shake_128f_keymgmt_functions[];
+extern const OSSL_DISPATCH p11prov_slhdsa_shake_192s_keymgmt_functions[];
+extern const OSSL_DISPATCH p11prov_slhdsa_shake_192f_keymgmt_functions[];
+extern const OSSL_DISPATCH p11prov_slhdsa_shake_256s_keymgmt_functions[];
+extern const OSSL_DISPATCH p11prov_slhdsa_shake_256f_keymgmt_functions[];

@@ -8,6 +8,9 @@
 #include "openssl/ec.h"
 #include "openssl/err.h"
 
+#define DISPATCH_ECDSA_FN(name) \
+    DECL_DISPATCH_FUNC(signature, p11prov_ecdsa, name)
+
 DISPATCH_ECDSA_FN(newctx);
 DISPATCH_ECDSA_FN(sign_init);
 DISPATCH_ECDSA_FN(sign);
@@ -56,7 +59,7 @@ DER_ECDSA_DEFS(256, 0x02, 0x0A);
 DER_ECDSA_DEFS(384, 0x03, 0x0B);
 DER_ECDSA_DEFS(512, 0x04, 0x0C);
 
-struct ecdsa_data {
+static const struct ecdsa_data {
     CK_MECHANISM_TYPE digest;
     CK_MECHANISM_TYPE mech;
     const void *der;
@@ -662,7 +665,7 @@ static const OSSL_PARAM *p11prov_ecdsa_settable_ctx_params(void *ctx,
     return params;
 }
 
-const OSSL_DISPATCH p11prov_ecdsa_signature_functions[] = {
+const OSSL_DISPATCH p11prov_ecdsa_functions[] = {
     DISPATCH_SIG_ELEM(ecdsa, NEWCTX, newctx),
     DISPATCH_SIG_ELEM(sig, FREECTX, freectx),
     DISPATCH_SIG_ELEM(sig, DUPCTX, dupctx),
@@ -695,7 +698,7 @@ const OSSL_DISPATCH p11prov_ecdsa_signature_functions[] = {
     { \
         return p11prov_ecdsa_digest_verify_init(ctx, digest, provkey, params); \
     } \
-    const OSSL_DISPATCH p11prov_ecdsa_##alg##_signature_functions[] = { \
+    const OSSL_DISPATCH p11prov_ecdsa_##alg##_functions[] = { \
         DISPATCH_SIG_ELEM(ecdsa, NEWCTX, newctx), \
         DISPATCH_SIG_ELEM(sig, FREECTX, freectx), \
         DISPATCH_SIG_ELEM(sig, DUPCTX, dupctx), \

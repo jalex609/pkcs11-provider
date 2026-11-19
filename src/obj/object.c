@@ -36,7 +36,8 @@ static void destroy_key_cache(P11PROV_OBJ *obj, P11PROV_SESSION *session)
     if (session) {
         sess = p11prov_session_handle(session);
     } else {
-        ret = p11prov_take_login_session(obj->ctx, obj->slotid, &_session);
+        ret = p11prov_take_login_session(obj->ctx, obj->slotid,
+                                         LOGIN_ONLY_CACHED, &_session);
         if (ret != CKR_OK) {
             P11PROV_debug("Failed to get login session. Error %lx", ret);
             return;
@@ -53,6 +54,39 @@ static void destroy_key_cache(P11PROV_OBJ *obj, P11PROV_SESSION *session)
     if (_session) {
         p11prov_return_session(_session);
     }
+}
+
+static void destroy_owned_key(P11PROV_OBJ *obj)
+{
+    P11PROV_SESSION *session = NULL;
+    CK_RV ret;
+
+    if (!obj->owns_key) {
+        return;
+    }
+    /* nothing to destroy if the key was never stored or was reset */
+    if (obj->handle == CK_INVALID_HANDLE
+        || obj->handle == CK_P11PROV_IMPORTED_HANDLE) {
+        return;
+    }
+
+    ret = p11prov_try_session_ref(obj, CK_UNAVAILABLE_INFORMATION,
+                                  LOGIN_NOT_REQUIRED, false, &session);
+    if (ret != CKR_OK) {
+        P11PROV_debug("Failed to get session to destroy owned key. "
+                      "Error %lx",
+                      ret);
+        return;
+    }
+
+    ret = p11prov_DestroyObject(obj->ctx, p11prov_session_handle(session),
+                                obj->handle);
+    if (ret != CKR_OK) {
+        P11PROV_debug("Failed to destroy owned key. Error %lx", ret);
+    }
+    obj->handle = CK_INVALID_HANDLE;
+
+    p11prov_return_session(session);
 }
 
 static void cache_key(P11PROV_OBJ *obj)
@@ -72,6 +106,7 @@ static void cache_key(P11PROV_OBJ *obj)
           sizeof("Internal Session Only Copy") - 1 },
     };
     CK_SESSION_HANDLE sess;
+    CK_OBJECT_HANDLE handle;
     CK_BBOOL can_cache = CK_TRUE;
     CK_RV ret;
     int cache_keys;
@@ -98,18 +133,29 @@ static void cache_key(P11PROV_OBJ *obj)
         return;
     }
 
-    ret = p11prov_take_login_session(obj->ctx, obj->slotid, &session);
-    if (ret != CKR_OK || session == NULL) {
-        P11PROV_debug("Failed to get login session. Error %lx", ret);
+    handle = p11prov_obj_get_handle(obj);
+    if (handle == CK_INVALID_HANDLE) {
+        /* no point in proceeding here, nothing to "cache" */
         return;
+    }
+
+    /* caching is only an optimization, never trigger a login for it and
+     * never leak errors to the caller */
+    p11prov_set_error_mark(obj->ctx);
+
+    ret = p11prov_take_login_session(obj->ctx, obj->slotid, LOGIN_ONLY_CACHED,
+                                     &session);
+    if (ret != CKR_OK || session == NULL) {
+        P11PROV_debug("No usable login session for caching. Error %lx", ret);
+        goto done;
     }
 
     /* If already cached, release and re-cache */
     destroy_key_cache(obj, session);
 
     sess = p11prov_session_handle(session);
-    ret = p11prov_CopyObject(obj->ctx, sess, p11prov_obj_get_handle(obj),
-                             template, sizeof(template) / sizeof(template[0]),
+    ret = p11prov_CopyObject(obj->ctx, sess, handle, template,
+                             sizeof(template) / sizeof(template[0]),
                              &obj->cached);
     if (ret != CKR_OK) {
         P11PROV_raise(obj->ctx, ret, "Failed to cache key");
@@ -128,13 +174,15 @@ static void cache_key(P11PROV_OBJ *obj)
     }
 
     p11prov_return_session(session);
-    return;
+
+done:
+    p11prov_pop_error_to_mark(obj->ctx);
 }
 
 static void p11prov_obj_refresh(P11PROV_OBJ *obj)
 {
     int login_behavior;
-    bool login = false;
+    enum p11prov_login_request login = LOGIN_NOT_REQUIRED;
     P11PROV_SESSION *session = NULL;
     CK_SESSION_HANDLE sess = CK_INVALID_HANDLE;
     CK_ATTRIBUTE template[3] = { 0 };
@@ -147,12 +195,33 @@ static void p11prov_obj_refresh(P11PROV_OBJ *obj)
 
     P11PROV_debug("Refresh object %p", obj);
 
+    if (obj->ref_obj) {
+        /* re-borrow the handle from the owner */
+        obj->handle = p11prov_obj_get_handle(obj->ref_obj);
+        obj->raf = false;
+        return;
+    }
+
+    if (obj->owns_key) {
+        /* the key is not on the token anymore, as refresh happens on fork
+         * where we fully reset the token sessions.
+         * This means it needs to be stored again */
+        ret = p11prov_obj_re_store_key(obj);
+        if (ret != CKR_OK) {
+            P11PROV_raise(obj->ctx, ret, "Failed to refresh stored object %p",
+                          obj);
+            return;
+        }
+        obj->raf = false;
+        return;
+    }
+
     if (obj->class == CKO_PRIVATE_KEY || obj->class == CKO_SECRET_KEY) {
-        login = true;
+        login = LOGIN_REQUIRED;
     }
     login_behavior = p11prov_ctx_login_behavior(obj->ctx);
     if (login_behavior == PUBKEY_LOGIN_ALWAYS) {
-        login = true;
+        login = LOGIN_REQUIRED;
     }
 
     ret = p11prov_try_session_ref(obj, CK_UNAVAILABLE_INFORMATION, login, false,
@@ -215,6 +284,9 @@ static void p11prov_obj_refresh(P11PROV_OBJ *obj)
     obj->cached = tmp->cached;
     obj->cka_copyable = tmp->cka_copyable;
     obj->cka_token = tmp->cka_token;
+    obj->get_template = tmp->get_template;
+    obj->free_template = tmp->free_template;
+    obj->get_find_attrs = tmp->get_find_attrs;
     switch (obj->class) {
     case CKO_CERTIFICATE:
         obj->data.crt = tmp->data.crt;
@@ -235,10 +307,9 @@ static void p11prov_obj_refresh(P11PROV_OBJ *obj)
     p11prov_obj_free(tmp);
     obj->raf = false;
 
-    /* Refresh the associated object too if there is one */
-    if (obj->assoc_obj && obj->assoc_obj->raf) {
-        p11prov_obj_refresh(obj->assoc_obj);
-    }
+    /* The associated object is refreshed on demand when its handle is
+     * requested, doing it here could require a login (if it is a private
+     * key) that is not needed for the current operation */
 
 done:
     p11prov_return_session(session);
@@ -291,17 +362,20 @@ void p11prov_obj_free(P11PROV_OBJ *obj)
         return;
     }
 
+    /* stop being findable in the pool before destroying the handle */
+    obj_rm_from_pool(obj);
+
+    destroy_owned_key(obj);
+
     if (obj->ref_session) {
         p11prov_session_deref(obj->ref_session);
         obj->ref_session = NULL;
     }
 
-    obj_rm_from_pool(obj);
-
     destroy_key_cache(obj, NULL);
 
     for (int i = 0; i < obj->numattrs; i++) {
-        OPENSSL_free(obj->attrs[i].pValue);
+        OPENSSL_clear_free(obj->attrs[i].pValue, obj->attrs[i].ulValueLen);
     }
     OPENSSL_free(obj->attrs);
 
@@ -309,6 +383,7 @@ void p11prov_obj_free(P11PROV_OBJ *obj)
     p11prov_uri_free(obj->refresh_uri);
 
     p11prov_obj_free(obj->assoc_obj);
+    p11prov_obj_free(obj->ref_obj);
 
     OPENSSL_clear_free(obj, sizeof(P11PROV_OBJ));
 }
@@ -407,70 +482,76 @@ CK_SLOT_ID p11prov_obj_get_slotid(P11PROV_OBJ *obj)
     return CK_UNAVAILABLE_INFORMATION;
 }
 
-CK_OBJECT_HANDLE p11prov_obj_get_handle(P11PROV_OBJ *obj)
+CK_OBJECT_HANDLE p11prov_obj_get_handle_no_cache(P11PROV_OBJ *obj)
 {
-    if (obj) {
-        if (obj->raf) {
-            p11prov_obj_refresh(obj);
-        }
-        if (obj->cached != CK_INVALID_HANDLE) {
-            return obj->cached;
-        }
-        /* we have a few mock object cases to handle */
-        if (obj->handle == CK_P11PROV_IMPORTED_HANDLE) {
-            int rv;
+    if (!obj) {
+        return CK_INVALID_HANDLE;
+    }
+    if (obj->raf) {
+        p11prov_obj_refresh(obj);
+    }
+    /* we have a few mock object cases to handle */
+    if (obj->handle == CK_P11PROV_IMPORTED_HANDLE) {
+        int rv;
 
-            /* if this is a synthetic public key,
-             * first try to find if we have an actual key in the token.
-             * if that fails, we store it like we do for imported keys.
-             */
-            if (obj->class == CKO_P11PROV_PUB_FROM_PRIV_KEY) {
-                P11PROV_OBJ *priv, *pub;
+        /* if this is a synthetic public key,
+         * first try to find if we have an actual key in the token.
+         * if that fails, we store it like we do for imported keys.
+         */
+        if (obj->class == CKO_P11PROV_PUB_FROM_PRIV_KEY) {
+            P11PROV_OBJ *priv, *pub;
 
-                /* should never happen, but just in case */
-                if (!obj->assoc_obj
-                    || obj->assoc_obj->class != CKO_PRIVATE_KEY) {
+            /* should never happen, but just in case */
+            if (!obj->assoc_obj || obj->assoc_obj->class != CKO_PRIVATE_KEY) {
+                return CK_INVALID_HANDLE;
+            }
+
+            /* search */
+            priv = obj->assoc_obj;
+            pub = p11prov_obj_find_associated(priv, CKO_PUBLIC_KEY);
+            if (pub) {
+                /* we found it, and the function re-associates this new
+                 * public key with the private, in the future priv->pub
+                 * requests will find the token key directly.
+                 *
+                 * We still need to handle code that references the mock
+                 * object though, so we copy over the pub key data */
+                rv = p11prov_obj_copy_key_data(obj, pub);
+                p11prov_obj_free(pub);
+                if (rv != CKR_OK) {
                     return CK_INVALID_HANDLE;
                 }
 
-                /* search */
-                priv = obj->assoc_obj;
-                pub = p11prov_obj_find_associated(priv, CKO_PUBLIC_KEY);
-                if (pub) {
-                    /* we found it, and the function re-associates this new
-                     * public key with the private, in the future priv->pub
-                     * requests will find the token key directly.
-                     *
-                     * We still need to handle code that references the mock
-                     * object though, so we copy over the pub key data */
-                    rv = p11prov_obj_copy_key_data(obj, pub);
-                    p11prov_obj_free(pub);
-                    if (rv != CKR_OK) {
-                        return CK_INVALID_HANDLE;
-                    }
-
-                    return obj->handle;
-                }
-
-                /* intentionally continue with the next step, which will
-                 * store a new public key session object on the token
-                 * from the info on the private key */
+                return obj->handle;
             }
 
-            /* This was a mock imported public key,
-             * but we are being asked for the actual key handle
-             * so it means we need to actually add the key to the
-             * session in order to be able to perform operations
-             * with the token */
-
-            rv = p11prov_obj_store_public_key(obj);
-            if (rv != CKR_OK) {
-                return CK_INVALID_HANDLE;
-            }
+            /* intentionally continue with the next step, which will
+             * store a new public key session object on the token
+             * from the info on the private key */
         }
-        return obj->handle;
+
+        /* This was a mock imported public key,
+         * but we are being asked for the actual key handle
+         * so it means we need to actually add the key to the
+         * session in order to be able to perform operations
+         * with the token */
+        rv = p11prov_obj_re_store_key(obj);
+        if (rv != CKR_OK) {
+            return CK_INVALID_HANDLE;
+        }
     }
-    return CK_INVALID_HANDLE;
+    return obj->handle;
+}
+
+CK_OBJECT_HANDLE p11prov_obj_get_handle(P11PROV_OBJ *obj)
+{
+    if (!obj) {
+        return CK_INVALID_HANDLE;
+    }
+    if (obj->cached != CK_INVALID_HANDLE) {
+        return obj->cached;
+    }
+    return p11prov_obj_get_handle_no_cache(obj);
 }
 
 CK_OBJECT_CLASS p11prov_obj_get_class(P11PROV_OBJ *obj)
@@ -494,6 +575,78 @@ CK_ATTRIBUTE *p11prov_obj_get_attr(P11PROV_OBJ *obj, CK_ATTRIBUTE_TYPE type)
     }
 
     return NULL;
+}
+
+CK_ATTRIBUTE *p11prov_obj_get_public_attr(P11PROV_OBJ *obj,
+                                          CK_ATTRIBUTE_TYPE type)
+{
+    if (!obj) {
+        return NULL;
+    }
+
+    for (int i = 0; i < obj->numattrs; i++) {
+        if (obj->attrs[i].type == type) {
+            return &obj->attrs[i];
+        }
+    }
+
+    /* search public key if the private key does not have it */
+    if (obj->class == CKO_PRIVATE_KEY) {
+        P11PROV_OBJ *pubobj = p11prov_obj_find_associated(obj, CKO_PUBLIC_KEY);
+        if (pubobj == NULL) {
+            return NULL;
+        }
+
+        /* p11prov_obj_find_associated, associates the object with obj,
+         * so it is ok to return a pointer into its array as the following
+         * p11prov_obj_free() will just dereference our pointer, but the
+         * object is still held alive by obj itself */
+        for (int i = 0; i < pubobj->numattrs; i++) {
+            if (pubobj->attrs[i].type == type) {
+                return &pubobj->attrs[i];
+            }
+        }
+
+        p11prov_obj_free(pubobj);
+    }
+
+    return NULL;
+}
+
+int p11prov_obj_get_template(P11PROV_OBJ *obj, CK_OBJECT_CLASS class,
+                             const OSSL_PARAM *params, CK_ATTRIBUTE *template)
+{
+    if (!obj || !obj->get_template) {
+        return -1;
+    }
+    return obj->get_template(obj, class, params, template);
+}
+
+void p11prov_obj_free_template(P11PROV_OBJ *obj, CK_OBJECT_CLASS class,
+                               CK_ATTRIBUTE *template, int tmpl_cnt)
+{
+    if (obj && obj->free_template) {
+        obj->free_template(obj, class, template, tmpl_cnt);
+    }
+}
+
+CK_RV p11prov_obj_get_find_attrs(P11PROV_OBJ *obj, CK_OBJECT_CLASS class,
+                                 const OSSL_PARAM *params,
+                                 CK_ATTRIBUTE attrs[static MAX_FIND_ATTRS_SIZE],
+                                 int *numattrs)
+{
+    if (!obj || !obj->get_find_attrs) {
+        return CKR_ARGUMENTS_BAD;
+    }
+    return obj->get_find_attrs(obj, class, params, attrs, numattrs);
+}
+
+void p11prov_obj_set_get_find_attrs(
+    P11PROV_OBJ *obj, p11prov_obj_get_find_attrs_fn get_find_attrs)
+{
+    if (obj->handle == CK_P11PROV_IMPORTED_HANDLE) {
+        obj->get_find_attrs = get_find_attrs;
+    }
 }
 
 bool p11prov_obj_get_bool(P11PROV_OBJ *obj, CK_ATTRIBUTE_TYPE type, bool def)
@@ -647,6 +800,9 @@ void p11prov_obj_set_associated(P11PROV_OBJ *obj, P11PROV_OBJ *assoc)
 void p11prov_obj_set_session_ref(P11PROV_OBJ *obj, P11PROV_SESSION *session)
 {
     p11prov_session_ref(session);
+    if (obj->ref_session) {
+        p11prov_session_deref(obj->ref_session);
+    }
     obj->ref_session = session;
 }
 
@@ -663,6 +819,22 @@ void p11prov_obj_set_key_type(P11PROV_OBJ *obj, CK_KEY_TYPE type)
     /* allow this only for mock objects */
     if (obj->handle == CK_P11PROV_IMPORTED_HANDLE) {
         obj->data.key.type = type;
+    }
+}
+
+void p11prov_obj_set_get_template(P11PROV_OBJ *obj,
+                                  p11prov_obj_get_template_fn get_template)
+{
+    if (obj->handle == CK_P11PROV_IMPORTED_HANDLE) {
+        obj->get_template = get_template;
+    }
+}
+
+void p11prov_obj_set_free_template(P11PROV_OBJ *obj,
+                                   p11prov_obj_free_template_fn free_template)
+{
+    if (obj->handle == CK_P11PROV_IMPORTED_HANDLE) {
+        obj->free_template = free_template;
     }
 }
 

@@ -58,20 +58,24 @@ const struct fetch_attrs EC_private_attrs[] = {
  * - CKA_P11PROV_PUB_KEY */
 #define EXTRA_EC_PARAMS 3
 
-const struct fetch_attrs ML_DSA_public_attrs[] = {
+const struct fetch_attrs PQ_ALG_public_attrs[] = {
     COMMON_KEYPAIR_ATTRIBUTES,
     { { CKA_PARAMETER_SET, NULL, 0 }, true, true },
     { { CKA_VALUE, NULL, 0 }, true, true },
 };
 
-const struct fetch_attrs ML_DSA_private_attrs[] = {
+const struct fetch_attrs PQ_ALG_private_attrs[] = {
     COMMON_KEYPAIR_ATTRIBUTES,
     { { CKA_PARAMETER_SET, NULL, 0 }, true, true },
     { { CKA_ALWAYS_AUTHENTICATE, NULL, 0 }, true, false },
 };
 
-#define ML_KEM_public_attrs ML_DSA_public_attrs
-#define ML_KEM_private_attrs ML_DSA_private_attrs
+#define ML_DSA_public_attrs PQ_ALG_public_attrs
+#define ML_DSA_private_attrs PQ_ALG_private_attrs
+#define ML_KEM_public_attrs PQ_ALG_public_attrs
+#define ML_KEM_private_attrs PQ_ALG_private_attrs
+#define SLH_DSA_public_attrs PQ_ALG_public_attrs
+#define SLH_DSA_private_attrs PQ_ALG_private_attrs
 
 const struct fetch_attrs secret_key_attrs[] = {
     COMMON_KEY_ATTRIBUTES,
@@ -121,6 +125,7 @@ const struct key_attrs {
     FILL_ATTRS(EC_MONTGOMERY, 1 + EXTRA_EC_PARAMS),
     FILL_ATTRS(ML_DSA, 1),
     FILL_ATTRS(ML_KEM, 1),
+    FILL_ATTRS(SLH_DSA, 1),
     FILL_KNOWN_SECRETS(1),
     { 0, 0, NULL, 0, 0 },
 };
@@ -243,6 +248,49 @@ static CK_RV fetch_key(P11PROV_CTX *ctx, P11PROV_SESSION *session,
         }
         key->data.key.bit_size = key->data.key.size * 8;
         return CKR_OK;
+    case CKK_SLH_DSA:
+        switch (key->data.key.param_set) {
+        case CKP_SLH_DSA_SHA2_128S:
+            key->data.key.size = SLH_DSA_SHA2_128S_PK_SIZE;
+            break;
+        case CKP_SLH_DSA_SHA2_128F:
+            key->data.key.size = SLH_DSA_SHA2_128F_PK_SIZE;
+            break;
+        case CKP_SLH_DSA_SHA2_192S:
+            key->data.key.size = SLH_DSA_SHA2_192S_PK_SIZE;
+            break;
+        case CKP_SLH_DSA_SHA2_192F:
+            key->data.key.size = SLH_DSA_SHA2_192F_PK_SIZE;
+            break;
+        case CKP_SLH_DSA_SHA2_256S:
+            key->data.key.size = SLH_DSA_SHA2_256S_PK_SIZE;
+            break;
+        case CKP_SLH_DSA_SHA2_256F:
+            key->data.key.size = SLH_DSA_SHA2_256F_PK_SIZE;
+            break;
+        case CKP_SLH_DSA_SHAKE_128S:
+            key->data.key.size = SLH_DSA_SHAKE_128S_PK_SIZE;
+            break;
+        case CKP_SLH_DSA_SHAKE_128F:
+            key->data.key.size = SLH_DSA_SHAKE_128F_PK_SIZE;
+            break;
+        case CKP_SLH_DSA_SHAKE_192S:
+            key->data.key.size = SLH_DSA_SHAKE_192S_PK_SIZE;
+            break;
+        case CKP_SLH_DSA_SHAKE_192F:
+            key->data.key.size = SLH_DSA_SHAKE_192F_PK_SIZE;
+            break;
+        case CKP_SLH_DSA_SHAKE_256S:
+            key->data.key.size = SLH_DSA_SHAKE_256S_PK_SIZE;
+            break;
+        case CKP_SLH_DSA_SHAKE_256F:
+            key->data.key.size = SLH_DSA_SHAKE_256F_PK_SIZE;
+            break;
+        default:
+            return CKR_KEY_INDIGESTIBLE;
+        }
+        key->data.key.bit_size = key->data.key.size * 8;
+        return CKR_OK;
     default:
         /* CKO_SECRET_KEY types */
         a = p11prov_obj_get_attr(key, CKA_VALUE_LEN);
@@ -341,7 +389,7 @@ static CK_RV pre_process_ec_key_data(P11PROV_OBJ *key)
         return CKR_OK;
     }
 
-    ret = decode_ec_point(key->ctx, type, attr, &ec_point);
+    ret = decode_ec_point(key->ctx, type, key->data.key.size, attr, &ec_point);
     if (ret != CKR_OK) {
         return ret;
     }
@@ -627,8 +675,8 @@ P11PROV_OBJ *p11prov_obj_find_associated(P11PROV_OBJ *obj,
     CKATTR_ASSIGN(template[0], CKA_CLASS, &class, sizeof(class));
     template[1] = *id;
 
-    ret = p11prov_try_session_ref(obj, CK_UNAVAILABLE_INFORMATION, false, false,
-                                  &session);
+    ret = p11prov_try_session_ref(obj, CK_UNAVAILABLE_INFORMATION,
+                                  LOGIN_NOT_REQUIRED, false, &session);
     if (ret != CKR_OK) {
         goto done;
     }

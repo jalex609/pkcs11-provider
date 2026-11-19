@@ -1,6 +1,6 @@
 project(
   'pkcs11-provider', 'c',
-  version: '1.2.0',
+  version: '1.3.0',
   meson_version: '>= 0.57',
   default_options: ['c_std=c11'],
 )
@@ -50,6 +50,12 @@ if not libcrypto.found()
   libcrypto = dependency('libcrypto3', version: '>= 3.0.7', required: true)
 endif
 provider_path = libcrypto.get_variable(pkgconfig: 'modulesdir')
+
+sys_root = meson.get_external_property('sys_root', '')
+if sys_root != '' and provider_path.startswith(sys_root)
+  provider_path = provider_path.replace(sys_root, '')
+endif
+
 libssl = dependency('libssl', version: '>= 3.0.7', required: false)
 if not libssl.found()
   libssl = dependency('libssl3', version: '>= 3.0.7', required: true, method: 'pkg-config')
@@ -100,6 +106,23 @@ foreach h : headers
   endif
 endforeach
 
+# dl and pthread are needed for linking on platforms that do not include
+# them in glibc (for example el8). We do have them already when we run
+# the provider library and load that from openssl as openssl has them already
+# linked in, but we need them for linking self-contained binaries.
+dl_dep = cc.find_library('dl', required: host_system == 'windows')
+pthread_dep = dependency('threads')
+
+functions = [
+  'OSSL_PROVIDER_load_ex',
+]
+
+foreach f : functions
+  if cc.has_function(f, dependencies: libcrypto)
+    conf.set('HAVE_' + f.underscorify().to_upper(), 1)
+  endif
+endforeach
+
 configure_file(output: 'config.h', configuration: conf)
 
 meson.add_dist_script('scripts/clean-dist.sh')
@@ -107,4 +130,3 @@ meson.add_dist_script('scripts/clean-dist.sh')
 subdir('src')
 subdir('docs')
 subdir('tests')
-

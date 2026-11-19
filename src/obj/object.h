@@ -14,6 +14,12 @@
 /* Special value for public key created from a private one */
 #define CKO_P11PROV_PUB_FROM_PRIV_KEY CKA_P11PROV_BASE + 2
 
+#define CKA_P11PROV_CURVE_NAME CKA_P11PROV_BASE + 1
+#define CKA_P11PROV_CURVE_NID CKA_P11PROV_BASE + 2
+#define CKA_P11PROV_PUB_KEY CKA_P11PROV_BASE + 3
+#define CKA_P11PROV_PUB_KEY_X CKA_P11PROV_BASE + 4
+#define CKA_P11PROV_PUB_KEY_Y CKA_P11PROV_BASE + 5
+
 /* Objects */
 CK_RV p11prov_obj_pool_init(P11PROV_CTX *ctx, CK_SLOT_ID id,
                             P11PROV_OBJ_POOL **_pool);
@@ -28,6 +34,36 @@ CK_SLOT_ID p11prov_obj_get_slotid(P11PROV_OBJ *obj);
 CK_OBJECT_HANDLE p11prov_obj_get_handle(P11PROV_OBJ *obj);
 CK_OBJECT_CLASS p11prov_obj_get_class(P11PROV_OBJ *obj);
 CK_ATTRIBUTE *p11prov_obj_get_attr(P11PROV_OBJ *obj, CK_ATTRIBUTE_TYPE type);
+CK_ATTRIBUTE *p11prov_obj_get_public_attr(P11PROV_OBJ *obj,
+                                          CK_ATTRIBUTE_TYPE type);
+#define P11PROV_PUBKEY_MAX_TEMPLATE_SIZE 8
+#define P11PROV_PRIVKEY_MAX_TEMPLATE_SIZE 17
+typedef int (*p11prov_obj_get_template_fn)(P11PROV_OBJ *obj,
+                                           CK_OBJECT_CLASS class,
+                                           const OSSL_PARAM *params,
+                                           CK_ATTRIBUTE *template);
+int p11prov_obj_get_template(P11PROV_OBJ *obj, CK_OBJECT_CLASS class,
+                             const OSSL_PARAM *params, CK_ATTRIBUTE *template);
+void p11prov_obj_set_get_template(P11PROV_OBJ *obj,
+                                  p11prov_obj_get_template_fn get_template);
+typedef void (*p11prov_obj_free_template_fn)(P11PROV_OBJ *obj,
+                                             CK_OBJECT_CLASS class,
+                                             CK_ATTRIBUTE *template,
+                                             int tmpl_cnt);
+void p11prov_obj_free_template(P11PROV_OBJ *obj, CK_OBJECT_CLASS class,
+                               CK_ATTRIBUTE *template, int tmpl_cnt);
+void p11prov_obj_set_free_template(P11PROV_OBJ *obj,
+                                   p11prov_obj_free_template_fn free_template);
+#define MAX_FIND_ATTRS_SIZE 4
+typedef CK_RV (*p11prov_obj_get_find_attrs_fn)(
+    P11PROV_OBJ *obj, CK_OBJECT_CLASS class, const OSSL_PARAM *params,
+    CK_ATTRIBUTE attrs[static MAX_FIND_ATTRS_SIZE], int *numattrs);
+CK_RV p11prov_obj_get_find_attrs(P11PROV_OBJ *obj, CK_OBJECT_CLASS class,
+                                 const OSSL_PARAM *params,
+                                 CK_ATTRIBUTE attrs[static MAX_FIND_ATTRS_SIZE],
+                                 int *numattrs);
+void p11prov_obj_set_get_find_attrs(
+    P11PROV_OBJ *obj, p11prov_obj_get_find_attrs_fn get_find_attrs);
 CK_RV p11prov_obj_add_attr(P11PROV_OBJ *obj, CK_ATTRIBUTE *attr);
 bool p11prov_obj_get_bool(P11PROV_OBJ *obj, CK_ATTRIBUTE_TYPE type, bool def);
 CK_KEY_TYPE p11prov_obj_get_key_type(P11PROV_OBJ *obj);
@@ -60,10 +96,10 @@ CK_RV p11prov_obj_from_handle(P11PROV_CTX *ctx, P11PROV_SESSION *session,
 CK_RV p11prov_obj_find(P11PROV_CTX *provctx, P11PROV_SESSION *session,
                        CK_SLOT_ID slotid, P11PROV_URI *uri,
                        store_obj_callback cb, void *cb_ctx);
-P11PROV_OBJ *p11prov_create_secret_key(P11PROV_CTX *provctx,
-                                       P11PROV_SESSION *session,
-                                       bool session_key, unsigned char *secret,
-                                       size_t secretlen);
+CK_RV p11prov_create_secret_key(P11PROV_CTX *provctx, P11PROV_SESSION *session,
+                                CK_FLAGS usage, bool session_key,
+                                unsigned char *secret, size_t secretlen,
+                                P11PROV_OBJ **key);
 CK_RV p11prov_derive_key(P11PROV_OBJ *key, CK_MECHANISM *mechanism,
                          CK_ATTRIBUTE *template, CK_ULONG nattrs,
                          P11PROV_SESSION **_session, CK_OBJECT_HANDLE *dkey);
@@ -164,5 +200,67 @@ extern const CK_BYTE ed448_oid[ECX_OID_LEN];
 #define ML_KEM_512_CIPHERTEXT_BYTES 768
 #define ML_KEM_768_CIPHERTEXT_BYTES 1088
 #define ML_KEM_1024_CIPHERTEXT_BYTES 1568
+
+/* See FIPS-205, 4. Parameter Sets */
+#define SLHDSA_SHA2_128S "SLH-DSA-SHA2-128s"
+#define SLHDSA_SHA2_128F "SLH-DSA-SHA2-128f"
+#define SLHDSA_SHA2_192S "SLH-DSA-SHA2-192s"
+#define SLHDSA_SHA2_192F "SLH-DSA-SHA2-192f"
+#define SLHDSA_SHA2_256S "SLH-DSA-SHA2-256s"
+#define SLHDSA_SHA2_256F "SLH-DSA-SHA2-256f"
+#define SLHDSA_SHAKE_128S "SLH-DSA-SHAKE-128s"
+#define SLHDSA_SHAKE_128F "SLH-DSA-SHAKE-128f"
+#define SLHDSA_SHAKE_192S "SLH-DSA-SHAKE-192s"
+#define SLHDSA_SHAKE_192F "SLH-DSA-SHAKE-192f"
+#define SLHDSA_SHAKE_256S "SLH-DSA-SHAKE-256s"
+#define SLHDSA_SHAKE_256F "SLH-DSA-SHAKE-256f"
+
+#define SLH_DSA_SHA2_128S_SK_SIZE 64
+#define SLH_DSA_SHA2_128S_PK_SIZE 32
+#define SLH_DSA_SHA2_128S_SIG_SIZE 7856
+
+#define SLH_DSA_SHAKE_128S_SK_SIZE 64
+#define SLH_DSA_SHAKE_128S_PK_SIZE 32
+#define SLH_DSA_SHAKE_128S_SIG_SIZE 7856
+
+#define SLH_DSA_SHA2_128F_SK_SIZE 64
+#define SLH_DSA_SHA2_128F_PK_SIZE 32
+#define SLH_DSA_SHA2_128F_SIG_SIZE 17088
+
+#define SLH_DSA_SHAKE_128F_SK_SIZE 64
+#define SLH_DSA_SHAKE_128F_PK_SIZE 32
+#define SLH_DSA_SHAKE_128F_SIG_SIZE 17088
+
+#define SLH_DSA_SHA2_192S_SK_SIZE 96
+#define SLH_DSA_SHA2_192S_PK_SIZE 48
+#define SLH_DSA_SHA2_192S_SIG_SIZE 16224
+
+#define SLH_DSA_SHAKE_192S_SK_SIZE 96
+#define SLH_DSA_SHAKE_192S_PK_SIZE 48
+#define SLH_DSA_SHAKE_192S_SIG_SIZE 16224
+
+#define SLH_DSA_SHA2_192F_SK_SIZE 96
+#define SLH_DSA_SHA2_192F_PK_SIZE 48
+#define SLH_DSA_SHA2_192F_SIG_SIZE 35664
+
+#define SLH_DSA_SHAKE_192F_SK_SIZE 96
+#define SLH_DSA_SHAKE_192F_PK_SIZE 48
+#define SLH_DSA_SHAKE_192F_SIG_SIZE 35664
+
+#define SLH_DSA_SHA2_256S_SK_SIZE 128
+#define SLH_DSA_SHA2_256S_PK_SIZE 64
+#define SLH_DSA_SHA2_256S_SIG_SIZE 29792
+
+#define SLH_DSA_SHAKE_256S_SK_SIZE 128
+#define SLH_DSA_SHAKE_256S_PK_SIZE 64
+#define SLH_DSA_SHAKE_256S_SIG_SIZE 29792
+
+#define SLH_DSA_SHA2_256F_SK_SIZE 128
+#define SLH_DSA_SHA2_256F_PK_SIZE 64
+#define SLH_DSA_SHA2_256F_SIG_SIZE 49856
+
+#define SLH_DSA_SHAKE_256F_SK_SIZE 128
+#define SLH_DSA_SHAKE_256F_PK_SIZE 64
+#define SLH_DSA_SHAKE_256F_SIG_SIZE 49856
 
 #endif /* _OBJECTS_H */

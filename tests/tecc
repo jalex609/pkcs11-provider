@@ -20,6 +20,9 @@ if [ $FAIL -eq 1 ]; then
     exit 1
 fi
 
+title PARA "Get EC public point parameters from private key"
+$CHECKER "${TESTBLDDIR}/tecpubparams" "${ECPRIURI}" "${ECPUBURI}"
+
 title PARA "Sign and Verify with provided Hash and EC"
 ossl 'dgst -sha256 -binary -out ${TMPPDIR}/sha256.bin ${SEEDFILE}'
 ossl '
@@ -120,6 +123,9 @@ pkeyutl -verify -inkey "${ECBASEURI}" -pubin
                 -in ${RAND64FILE}
                 -rawin
                 -sigfile ${TMPPDIR}/sha3-512-ecdgstsig.bin'
+
+title PARA "Duplicate the key"
+$CHECKER "${TESTBLDDIR}/tdupkey" "$ECPRIURI" "$ECPUBURI"
 
 title PARA "Test CSR generation from private ECC keys"
 ossl '
